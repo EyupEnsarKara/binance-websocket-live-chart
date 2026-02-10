@@ -263,7 +263,7 @@ export default function LiveTradingView() {
                                 {fmt(currentPrice)}
                             </div>
                             <div className="flex items-center gap-2 mt-2">
-                                <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'secondary'} className="bg-opacity-10 text-xs px-1.5">
+                                <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'default'} className="bg-opacity-10 text-xs px-1.5">
                                     {chgPct > 0 ? '+' : ''}{chgPct.toFixed(2)}%
                                 </Badge>
                                 <span className="text-xs text-slate-500 font-mono">
