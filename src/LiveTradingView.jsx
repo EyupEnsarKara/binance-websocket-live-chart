@@ -5,8 +5,6 @@ import {
     Activity,
     TrendingUp,
     TrendingDown,
-    Wifi,
-    WifiOff,
     BarChart3,
     Clock,
 } from 'lucide-react';
@@ -244,7 +242,7 @@ export default function LiveTradingView() {
                         <span>{currentTime.toLocaleTimeString('en-US', { hour12: false })}</span>
                     </div>
                     <div className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
-                        {isConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
+                        <span className="connection-dot" />
                         <span>{isConnected ? 'LIVE' : 'OFFLINE'}</span>
                     </div>
                 </div>
@@ -308,7 +306,6 @@ export default function LiveTradingView() {
                                 <Activity size={18} className="chart-title-icon" />
                                 Price Chart
                             </h3>
-                            <span className="chart-badge live-badge">● LIVE</span>
                         </div>
                     </div>
                     <div className="chart-area">
