@@ -1,24 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, TrendingUp, TrendingDown, BarChart3, Clock } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, BarChart3, Clock, Zap, Wallet, ArrowUpRight, ArrowDownRight, Maximize2 } from 'lucide-react';
 
-// Binance WebSocket endpoint — BTC/USDT anlık trade stream
+// UI Bileşenleri
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
+import { Badge } from './components/ui/badge';
+import { cn } from './lib/utils';
+
+// --- LOGIC KISMI (DOKUNULMADI - AYNEN KORUNDU) ---
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
-
-// Grafik ve zamanlama ayarları
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 300;   // Grafikteki maksimum nokta sayısı
-const THROTTLE_MS = 250;       // Grafiğe veri ekleme aralığı (ms)
-const UI_UPDATE_MS = 500;      // React UI güncelleme aralığı (ms)
+const MAX_DATA_POINTS = 300;
+const THROTTLE_MS = 250;
+const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 export default function LiveTradingView() {
-    // Bağlantı durumu (header badge için)
     const [isConnected, setIsConnected] = useState(false);
-
-    // Tüm UI metrikleri tek state'te — tek bir re-render tetikler
     const [metrics, setMetrics] = useState({
         currentPrice: null,
         prevPrice: null,
@@ -28,9 +28,8 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    // Ref'ler: React render döngüsü dışında veri tutarak performans sağlar
-    const latestPriceRef = useRef(null);    // Son gelen fiyat (WS → ref, render yok)
-    const dataRef = useRef([]);             // Grafik veri dizisi
+    const latestPriceRef = useRef(null);
+    const dataRef = useRef([]);
     const wsRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const reconnectTimer = useRef(null);
@@ -43,7 +42,6 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    // WebSocket bağlantısı — bağlantı koptuğunda exponential backoff ile yeniden bağlanır
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -58,7 +56,6 @@ export default function LiveTradingView() {
             reconnectAttempts.current = 0;
         };
 
-        // Her trade mesajında sadece ref güncellenir — state yazılmaz, render tetiklenmez
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             const price = parseFloat(data.p);
@@ -72,7 +69,6 @@ export default function LiveTradingView() {
             if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
         };
 
-        // Otomatik yeniden bağlanma (exponential backoff)
         ws.onclose = () => {
             setIsConnected(false);
             if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
@@ -85,23 +81,19 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, []);
 
-    // Ana effect: WS bağlantısı + grafik tick + UI tick başlatır
     useEffect(() => {
         connectWebSocket();
 
-        // Grafik tick: her 250ms'de son fiyatı grafiğe ekler (React dışı, doğrudan ApexCharts)
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
             dataRef.current.push({ x: Date.now(), y: price });
 
-            // Sliding window: eski noktaları kaldır
             if (dataRef.current.length > MAX_DATA_POINTS) {
                 dataRef.current.splice(0, dataRef.current.length - MAX_DATA_POINTS);
             }
 
-            // Grafiği React render döngüsü dışında güncelle
             if (chartReady.current) {
                 ApexCharts.exec(CHART_ID, 'updateSeries', [
                     { data: dataRef.current },
@@ -109,7 +101,6 @@ export default function LiveTradingView() {
             }
         }, THROTTLE_MS);
 
-        // UI tick: her 500ms'de metrik state'ini günceller (React re-render burada tetiklenir)
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -124,7 +115,6 @@ export default function LiveTradingView() {
             }));
         }, UI_UPDATE_MS);
 
-        // Cleanup: WS, timer ve interval'leri temizle
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
@@ -133,16 +123,14 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket]);
 
-    // Metriklerden destructure
     const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
-    // Fiyat yönü: yukarı / aşağı / nötr
     const priceDirection = useMemo(() => {
         if (currentPrice === null || prevPrice === null) return 'neutral';
         return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
     }, [currentPrice, prevPrice]);
 
-    // ApexCharts konfigürasyonu — sabit, asla değişmez (re-render tetiklemez)
+    // ApexCharts konfigürasyonu
     const chartOptions = useMemo(() => ({
         chart: {
             id: CHART_ID,
@@ -166,158 +154,218 @@ export default function LiveTradingView() {
             type: 'gradient',
             gradient: {
                 shadeIntensity: 1,
-                opacityFrom: 0.4,
-                opacityTo: 0.02,
-                stops: [0, 90, 100],
-                colorStops: [
-                    { offset: 0, color: '#10b981', opacity: 0.35 },
-                    { offset: 60, color: '#10b981', opacity: 0.1 },
-                    { offset: 100, color: '#10b981', opacity: 0.01 },
-                ],
+                opacityFrom: 0.45,
+                opacityTo: 0.05,
+                stops: [0, 100],
             },
         },
-        stroke: { curve: 'smooth', width: 2.5, colors: ['#10b981'], lineCap: 'round' },
+        stroke: { curve: 'smooth', width: 2, colors: ['#10b981'] },
         grid: {
             borderColor: '#1e293b',
-            strokeDashArray: 3,
+            strokeDashArray: 4,
             xaxis: { lines: { show: true } },
             yaxis: { lines: { show: true } },
-            padding: { top: 5, right: 15, bottom: 0, left: 15 },
+            // ÖNEMLİ DEĞİŞİKLİK: Alt tarafta yazıların görünmesi için boşluk (bottom: 20)
+            padding: { top: 0, right: 0, bottom: 20, left: 10 },
         },
         xaxis: {
             type: 'datetime',
             range: MAX_DATA_POINTS * THROTTLE_MS,
-            labels: {
-                show: true,
+            labels: { 
+                show: true, // ÖNEMLİ DEĞİŞİKLİK: Etiketleri açtık
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
-                datetimeFormatter: { second: 'HH:mm:ss' },
-                datetimeUTC: false,
+                datetimeFormatter: { 
+                    year: 'yyyy', 
+                    month: "MMM 'yy", 
+                    day: 'dd MMM', 
+                    hour: 'HH:mm', 
+                    minute: 'HH:mm:ss', 
+                    second: 'HH:mm:ss' 
+                },
+                datetimeUTC: false, 
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
+            tooltip: { enabled: false }
         },
         yaxis: {
             labels: {
                 style: { colors: '#64748b', fontSize: '11px', fontFamily: "'JetBrains Mono', monospace" },
-                formatter: (v) => v ? `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+                formatter: (v) => v ? `$${v.toFixed(2)}` : '',
             },
-            forceNiceScale: true,
-            tickAmount: 6,
+            opposite: true,
         },
         tooltip: {
             enabled: true,
             theme: 'dark',
             x: { format: 'HH:mm:ss' },
-            y: { formatter: (v) => `$${v?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+            y: { formatter: (v) => `$${v?.toFixed(2)}` },
         },
         dataLabels: { enabled: false },
-        markers: { size: 0, hover: { size: 4 } },
         theme: { mode: 'dark' },
     }), []);
 
-    // Boş başlangıç serisi — Chart mount olduktan sonra ApexCharts.exec ile güncellenir
     const initialSeries = useMemo(() => [{ name: 'BTC/USDT', data: [] }], []);
-
-    // Format yardımcıları
-    const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+    const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
     const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
     const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
     const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
+    const priceColor = priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-200';
 
-    // Canlı saat
     const [currentTime, setCurrentTime] = useState(new Date());
     useEffect(() => {
         const t = setInterval(() => setCurrentTime(new Date()), 1000);
         return () => clearInterval(t);
     }, []);
 
+    // --- YENİ UI LAYOUT (DATA TOP / CHART BOTTOM) ---
     return (
-        <div className="dashboard-container">
-            {/* Header */}
-            <header className="dashboard-header">
-                <div className="header-left">
-                    <div className="header-logo">
-                        <BarChart3 size={28} className="logo-icon" />
-                        <div>
-                            <h1 className="header-title">CryptoFlow</h1>
-                            <p className="header-subtitle">Real-time Trading Terminal</p>
-                        </div>
+        <div className="min-h-screen bg-slate-950 text-slate-50 font-sans flex flex-col">
+            
+            {/* 1. Header (Navbar) */}
+            <header className="px-6 py-4 border-b border-slate-800/60 bg-slate-900/20 backdrop-blur-sm flex justify-between items-center sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                    <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
+                        <BarChart3 className="text-emerald-500" size={20} />
+                    </div>
+                    <div>
+                        <h1 className="font-bold text-lg tracking-tight leading-none">CryptoFlow</h1>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-widest">Pro Terminal</span>
                     </div>
                 </div>
-                <div className="header-right">
-                    <div className="header-time">
-                        <Clock size={14} />
-                        <span>{currentTime.toLocaleTimeString('en-US', { hour12: false })}</span>
+                <div className="flex items-center gap-4">
+                    <div className="hidden md:flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
+                        <Clock size={12} />
+                        {currentTime.toLocaleTimeString('en-US', { hour12: false })}
                     </div>
-                    <div className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
-                        <span className="connection-dot" />
-                        <span>{isConnected ? 'LIVE' : 'OFFLINE'}</span>
-                    </div>
+                    <Badge variant={isConnected ? "success" : "destructive"} className="px-3 py-1">
+                        {isConnected ? 'LIVE' : 'OFFLINE'}
+                    </Badge>
                 </div>
             </header>
 
-            {/* Ana İçerik */}
-            <main className="dashboard-main">
-                {/* Fiyat Kartı */}
-                <div className="price-hero-card">
-                    <div className="price-hero-content">
-                        <div className="asset-info">
-                            <div className="asset-icon-wrapper">
-                                <span className="asset-icon">₿</span>
+            {/* 2. Main Content Wrapper */}
+            <main className="flex-1 p-4 md:p-6 flex flex-col gap-6 max-w-[1920px] mx-auto w-full">
+                
+                {/* --- ROW 1: DATA METRICS (GRID) --- */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    
+                    {/* CARD 1: MAIN PRICE */}
+                    <Card className="border-slate-800 bg-slate-900/40 relative overflow-hidden group">
+                        <div className={cn("absolute top-0 right-0 w-24 h-24 bg-gradient-to-br opacity-5 blur-2xl rounded-full transition-all duration-500 group-hover:opacity-10", priceDirection === 'up' ? 'from-emerald-500' : 'from-red-500')} />
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                                Market Price
+                                <span className="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[10px]">BTCUSDT</span>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className={cn("text-3xl font-mono font-bold tracking-tight transition-colors duration-200", priceColor)}>
+                                {fmt(currentPrice)}
                             </div>
-                            <div>
-                                <h2 className="asset-pair">BTC / USDT</h2>
-                                <p className="asset-label">Bitcoin • Perpetual</p>
-                            </div>
-                        </div>
-                        <div className="price-display">
-                            <div className={`price-value ${priceDirection}`}>
-                                {priceDirection === 'up' && <TrendingUp size={28} className="price-arrow" />}
-                                {priceDirection === 'down' && <TrendingDown size={28} className="price-arrow" />}
-                                <span>{fmt(currentPrice)}</span>
-                            </div>
-                            <div className={`price-change ${priceDirection}`}>
-                                <span>
-                                    {chg >= 0 ? '+' : ''}{chg.toFixed(2)} ({chgPct >= 0 ? '+' : ''}{chgPct.toFixed(4)}%)
+                            <div className="flex items-center gap-2 mt-2">
+                                <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'secondary'} className="bg-opacity-10 text-xs px-1.5">
+                                    {chgPct > 0 ? '+' : ''}{chgPct.toFixed(2)}%
+                                </Badge>
+                                <span className="text-xs text-slate-500 font-mono">
+                                    {chg > 0 ? '+' : ''}{chg.toFixed(2)}
                                 </span>
                             </div>
-                        </div>
-                    </div>
-                    <div className="mini-stats-row">
-                        <div className="mini-stat">
-                            <span className="mini-stat-label">Session High</span>
-                            <span className="mini-stat-value high">{sessionHigh > 0 ? fmt(sessionHigh) : '—'}</span>
-                        </div>
-                        <div className="mini-stat-divider" />
-                        <div className="mini-stat">
-                            <span className="mini-stat-label">Session Low</span>
-                            <span className="mini-stat-value low">{sessionLow < Infinity ? fmt(sessionLow) : '—'}</span>
-                        </div>
-                        <div className="mini-stat-divider" />
-                        <div className="mini-stat">
-                            <span className="mini-stat-label">Trades</span>
-                            <span className="mini-stat-value">{tradeCount.toLocaleString()}</span>
-                        </div>
-                        <div className="mini-stat-divider" />
-                        <div className="mini-stat">
-                            <span className="mini-stat-label">Volume (BTC)</span>
-                            <span className="mini-stat-value">{fmtVol(totalVolume)}</span>
-                        </div>
-                    </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* CARD 2: 24H HIGH / LOW */}
+                    {/* CARD 2: 24H HIGH / LOW (Minimal) */}
+                    <Card className="border-slate-800 bg-slate-900/40">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                <Maximize2 size={12} /> Session Range
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex flex-col justify-center gap-3 pt-2">
+                            {/* High */}
+                            <div className="flex justify-between items-center border-b border-slate-800/50 pb-2">
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
+                                <span className="font-mono text-sm font-semibold text-emerald-400 tracking-tight">
+                                    {sessionHigh > 0 ? fmt(sessionHigh) : '---'}
+                                </span>
+                            </div>
+
+                            {/* Low */}
+                            <div className="flex justify-between items-center pt-1">
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
+                                <span className="font-mono text-sm font-semibold text-red-400 tracking-tight">
+                                    {sessionLow < Infinity ? fmt(sessionLow) : '---'}
+                                </span>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* CARD 3: VOLUME */}
+                    <Card className="border-slate-800 bg-slate-900/40">
+                         <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                <Wallet size={12} /> 24h Volume
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
+                                {fmtVol(totalVolume)}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">Total traded BTC</p>
+                        </CardContent>
+                    </Card>
+
+                    {/* CARD 4: TRADES */}
+                    <Card className="border-slate-800 bg-slate-900/40">
+                         <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                <Zap size={12} className="text-amber-500" /> Active Trades
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
+                                {tradeCount.toLocaleString()}
+                            </div>
+                            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                                System Operational
+                            </p>
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* Grafik */}
-                <div className="chart-card">
-                    <div className="chart-card-header">
-                        <h3 className="chart-card-title">
-                            <Activity size={18} className="chart-title-icon" />
-                            Price Chart
-                        </h3>
-                    </div>
-                    <div className="chart-area">
-                        <Chart options={chartOptions} series={initialSeries} type="area" height="100%" width="100%" />
-                    </div>
-                </div>
+                {/* --- ROW 2: CHART (TAKES REMAINING SPACE) --- */}
+                <Card className="flex-1 min-h-[500px] border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl">
+                    <CardHeader className="border-b border-slate-800/50 py-3 px-6 flex flex-row items-center justify-between bg-slate-900/50">
+                        <div className="flex items-center gap-2">
+                            <Activity size={16} className="text-emerald-500" />
+                            <span className="text-sm font-medium text-slate-300">Live Market Depth</span>
+                        </div>
+                        <div className="flex gap-4">
+                            <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                <span className="text-[10px] text-slate-400 uppercase">Real-time</span>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="flex-1 p-0 relative">
+                        {/* Grafik Konteyner: Absolute ile kaplasın ki resize sorunu olmasın */}
+                        <div className="absolute inset-0 w-full h-full pb-2 pl-2">
+                            <Chart 
+                                options={chartOptions} 
+                                series={initialSeries} 
+                                type="area" 
+                                height="100%" 
+                                width="100%" 
+                            />
+                        </div>
+                    </CardContent>
+                </Card>
+
             </main>
         </div>
     );
