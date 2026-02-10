@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
 import {
@@ -15,19 +15,22 @@ import {
 
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 500;
-const THROTTLE_MS = 100;
+const MAX_DATA_POINTS = 300;
+const THROTTLE_MS = 250;
+const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 export default function LiveTradingView() {
-    const [currentPrice, setCurrentPrice] = useState(null);
-    const [prevPrice, setPrevPrice] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
-    const [tradeCount, setTradeCount] = useState(0);
-    const [sessionHigh, setSessionHigh] = useState(0);
-    const [sessionLow, setSessionLow] = useState(Infinity);
-    const [totalVolume, setTotalVolume] = useState(0);
+    const [metrics, setMetrics] = useState({
+        currentPrice: null,
+        prevPrice: null,
+        tradeCount: 0,
+        sessionHigh: 0,
+        sessionLow: Infinity,
+        totalVolume: 0,
+    });
 
     const latestPriceRef = useRef(null);
     const dataRef = useRef([]);
@@ -90,17 +93,16 @@ export default function LiveTradingView() {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            const point = { x: Date.now(), y: price };
-            dataRef.current.push(point);
+            dataRef.current.push({ x: Date.now(), y: price });
 
             if (dataRef.current.length > MAX_DATA_POINTS) {
-                dataRef.current = dataRef.current.slice(-MAX_DATA_POINTS);
+                dataRef.current.splice(0, dataRef.current.length - MAX_DATA_POINTS);
             }
 
             if (chartReady.current) {
                 ApexCharts.exec(CHART_ID, 'updateSeries', [
-                    { data: [...dataRef.current] },
-                ], true);
+                    { data: dataRef.current },
+                ], false);
             }
         }, THROTTLE_MS);
 
@@ -108,15 +110,15 @@ export default function LiveTradingView() {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            setCurrentPrice((prev) => {
-                setPrevPrice(prev);
-                return price;
-            });
-            setTradeCount(statsRef.current.tradeCount);
-            setSessionHigh(statsRef.current.sessionHigh);
-            setSessionLow(statsRef.current.sessionLow);
-            setTotalVolume(statsRef.current.totalVolume);
-        }, 300);
+            setMetrics((prev) => ({
+                currentPrice: price,
+                prevPrice: prev.currentPrice,
+                tradeCount: statsRef.current.tradeCount,
+                sessionHigh: statsRef.current.sessionHigh,
+                sessionLow: statsRef.current.sessionLow,
+                totalVolume: statsRef.current.totalVolume,
+            }));
+        }, UI_UPDATE_MS);
 
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
@@ -126,6 +128,8 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket]);
 
+
+    const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
     const priceDirection = useMemo(() => {
         if (currentPrice === null || prevPrice === null) return 'neutral';

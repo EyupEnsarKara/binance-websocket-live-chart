@@ -432,15 +432,6 @@ body {
 }
 
 
-.apexcharts-area-series .apexcharts-series path {
-  transition: d 100ms linear;
-  will-change: d;
-}
-
-.apexcharts-line-series .apexcharts-series path {
-  transition: d 100ms linear;
-  will-change: d;
-}
 
 .apexcharts-tooltip {
   background: var(--bg-card) !important;
