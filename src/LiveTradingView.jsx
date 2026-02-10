@@ -228,8 +228,8 @@ export default function LiveTradingView() {
                         <BarChart3 className="text-emerald-500" size={20} />
                     </div>
                     <div>
-                        <h1 className="font-bold text-lg tracking-tight leading-none">CryptoFlow</h1>
-                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-widest">Pro Terminal</span>
+                        <h1 className="font-bold text-lg tracking-tight leading-none">BTC Live Chart</h1>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-widest">Dashboard</span>
                     </div>
                 </div>
                 <div className="flex items-center gap-4">
