@@ -3,12 +3,12 @@ import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
 import { Activity, BarChart3, Clock, Zap, Wallet, Maximize2 } from 'lucide-react';
 
-// Shadcn UI Bileşenleri (Otomatik kurdukların)
+// Shadcn UI bileşenleri
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-// --- LOGIC KISMI (DOKUNULMADI - PERFORMANS İÇİN AYNEN KORUNDU) ---
+// WebSocket ve grafik ayarları
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
 const MAX_DATA_POINTS = 300;
@@ -18,6 +18,7 @@ const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 export default function LiveTradingView() {
+    // Bağlantı durumu ve ekranda gösterilen metrikler
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState({
         currentPrice: null,
@@ -28,13 +29,14 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    const latestPriceRef = useRef(null);
-    const dataRef = useRef([]);
-    const wsRef = useRef(null);
-    const reconnectAttempts = useRef(0);
-    const reconnectTimer = useRef(null);
-    const intervalRef = useRef(null);
-    const chartReady = useRef(false);
+    // Sık güncellenen veriler için ref'ler (re-render tetiklemeden saklanıyor)
+    const latestPriceRef = useRef(null);      // Son fiyat
+    const dataRef = useRef([]);              // Grafiğe giden ham veri
+    const wsRef = useRef(null);              // WebSocket nesnesi
+    const reconnectAttempts = useRef(0);     // Yeniden bağlanma sayacı
+    const reconnectTimer = useRef(null);     // Yeniden bağlanma zamanlayıcısı
+    const intervalRef = useRef(null);        // Grafik güncelleme aralığı
+    const chartReady = useRef(false);        // Grafik DOM'a oturdu mu
     const statsRef = useRef({
         tradeCount: 0,
         sessionHigh: 0,
@@ -42,6 +44,7 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
+    // Binance stream'e bağlanan ve temel event'leri yöneten fonksiyon
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -56,6 +59,7 @@ export default function LiveTradingView() {
             reconnectAttempts.current = 0;
         };
 
+        // Her yeni trade geldiğinde metrikleri güncelle
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             const price = parseFloat(data.p);
@@ -69,6 +73,7 @@ export default function LiveTradingView() {
             if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
         };
 
+        // Bağlantı kapanınca durumu güncelle ve kademeli yeniden bağlanmayı başlat
         ws.onclose = () => {
             setIsConnected(false);
             if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
@@ -81,9 +86,11 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, []);
 
+    // İlk yüklemede WebSocket'e bağlan, grafiği ve metrikleri periyodik güncelle
     useEffect(() => {
         connectWebSocket();
 
+        // Grafiğe giden veri akışı (THROTTLE_MS aralığında)
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -101,6 +108,7 @@ export default function LiveTradingView() {
             }
         }, THROTTLE_MS);
 
+        // Ekrandaki metrikleri yarım saniyede bir güncelle (daha az sık re-render)
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -115,6 +123,7 @@ export default function LiveTradingView() {
             }));
         }, UI_UPDATE_MS);
 
+        // Bileşen unmount olduğunda tüm timer ve bağlantıları temizle
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
@@ -125,12 +134,13 @@ export default function LiveTradingView() {
 
     const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
+    // Fiyat yönü (renk ve rozetler için)
     const priceDirection = useMemo(() => {
         if (currentPrice === null || prevPrice === null) return 'neutral';
         return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
     }, [currentPrice, prevPrice]);
 
-    // ApexCharts konfigürasyonu
+    // ApexCharts konfigürasyonu (sadece ilk yüklemede hesaplanır)
     const chartOptions = useMemo(() => ({
         chart: {
             id: CHART_ID,
@@ -204,20 +214,28 @@ export default function LiveTradingView() {
         theme: { mode: 'dark' },
     }), []);
 
+    // Grafiğin başlangıç serisi
     const initialSeries = useMemo(() => [{ name: 'BTC/USDT', data: [] }], []);
+
+    // Yardımcı formatlayıcılar
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
     const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
+
+    // Fiyat değişimi ve yüzde hesabı
     const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
     const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
+
+    // Fiyat yönüne göre renk seçimi
     const priceColor = priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-200';
 
+    // Navbar'da gösterilen lokal saat
     const [currentTime, setCurrentTime] = useState(new Date());
     useEffect(() => {
         const t = setInterval(() => setCurrentTime(new Date()), 1000);
         return () => clearInterval(t);
     }, []);
-
-    // --- RENDER (UI) ---
+    
+    // Arayüz iskeleti
     return (
         <div className="min-h-screen bg-slate-950 text-slate-50 font-sans flex flex-col">
             
