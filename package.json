@@ -10,7 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "apexcharts": "^5.3.6",
+    "lucide-react": "^0.563.0",
     "react": "^19.2.0",
+    "react-apexcharts": "^1.9.0",
     "react-dom": "^19.2.0",
     "recharts": "^2.15.1",
     "reui": "^0.5.0"
