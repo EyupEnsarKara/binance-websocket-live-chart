@@ -1,33 +1,33 @@
-# CryptoFlow — Real-time BTC/USDT Trading Terminal
+## BTC Live Chart — Binance WebSocket BTC/USDT Görselleştirici
 
-Binance WebSocket API üzerinden anlık BTC/USDT fiyat verilerini görselleştiren, yüksek performanslı bir React dashboard uygulaması.
+Binance WebSocket API üzerinden anlık BTC/USDT fiyat verilerini gösteren, sade ve yüksek performanslı bir React dashboard uygulaması.
 
-## Özellikler
+### Özellikler
 
-- **Canlı fiyat takibi** — Binance WebSocket stream üzerinden anlık trade verileri
-- **Akıcı grafik** — ApexCharts ile 300 noktalı kayan pencere (sliding window)
-- **Oturum istatistikleri** — High, Low, Trade sayısı, BTC hacmi
-- **Otomatik yeniden bağlanma** — Exponential backoff ile bağlantı kopma yönetimi
-- **Koyu terminal teması** — Profesyonel borsa terminali görünümü
+- **Canlı fiyat takibi**: Binance WebSocket stream üzerinden anlık BTC/USDT trade verileri
+- **Akıcı grafik**: ApexCharts ile 300 noktalı kayan pencere (sliding window)
+- **Oturum istatistikleri**: Session High / Low, işlem sayısı (tradeCount), oturum boyunca BTC hacmi
+- **Basit durum göstergesi**: Navbar’da bağlantı durumuna göre yeşil **LIVE** / kırmızı **OFFLINE** rozeti
+- **Koyu tema arayüzü**: Minimal, terminal benzeri koyu arayüz
 
-## Performans
+### Performans
 
-- WebSocket mesajları sadece `ref` günceller — state yazılmaz, render tetiklenmez
-- Grafik, React dışında `ApexCharts.exec()` ile güncellenir
+- WebSocket mesajları sadece `ref` günceller — state yazılmaz, gereksiz render tetiklenmez
+- Grafik, React dışında `ApexCharts.exec()` ile güncellenir (performanslı canlı akış)
 - UI metrikleri tek state objesi ile 500ms aralıklarla güncellenir
-- `splice()` ile yerinde dizi yönetimi — gereksiz kopyalama yok
+- `splice()` ile yerinde dizi yönetimi — gereksiz dizi kopyalama yok
 
-## Kurulum
+### Kurulum
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Teknolojiler
+### Teknolojiler
 
-- React + Vite
-- ApexCharts (react-apexcharts)
-- Binance WebSocket API
-- Lucide React Icons
-- Tailwind CSS
+- **React + Vite**
+- **ApexCharts (`react-apexcharts`)**
+- **Binance WebSocket API**
+- **Lucide React Icons**
+- **Tailwind CSS + shadcn UI bileşenleri (Card, Badge)**

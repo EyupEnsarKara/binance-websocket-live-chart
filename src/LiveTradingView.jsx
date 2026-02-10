@@ -255,7 +255,9 @@ export default function LiveTradingView() {
                         <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center justify-between">
                                 Market Price
-                                <span className="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[10px]">BTCUSDT</span>
+                                <span className="bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-md text-[11px] font-semibold border border-emerald-500/60 tracking-wide">
+                                    BTCUSDT
+                                </span>
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
@@ -300,7 +302,7 @@ export default function LiveTradingView() {
                     <Card className="border-slate-800 bg-slate-900/40">
                          <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                                <Wallet size={12} /> 24h Volume
+                                <Wallet size={12} />Volume
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
