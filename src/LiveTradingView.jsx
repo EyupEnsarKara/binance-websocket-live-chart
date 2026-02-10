@@ -1,26 +1,24 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import {
-    Activity,
-    TrendingUp,
-    TrendingDown,
-    BarChart3,
-    Clock,
-} from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, BarChart3, Clock } from 'lucide-react';
 
-
-
+// Binance WebSocket endpoint — BTC/USDT anlık trade stream
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
+
+// Grafik ve zamanlama ayarları
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 300;
-const THROTTLE_MS = 250;
-const UI_UPDATE_MS = 500;
+const MAX_DATA_POINTS = 300;   // Grafikteki maksimum nokta sayısı
+const THROTTLE_MS = 250;       // Grafiğe veri ekleme aralığı (ms)
+const UI_UPDATE_MS = 500;      // React UI güncelleme aralığı (ms)
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 export default function LiveTradingView() {
+    // Bağlantı durumu (header badge için)
     const [isConnected, setIsConnected] = useState(false);
+
+    // Tüm UI metrikleri tek state'te — tek bir re-render tetikler
     const [metrics, setMetrics] = useState({
         currentPrice: null,
         prevPrice: null,
@@ -30,8 +28,9 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    const latestPriceRef = useRef(null);
-    const dataRef = useRef([]);
+    // Ref'ler: React render döngüsü dışında veri tutarak performans sağlar
+    const latestPriceRef = useRef(null);    // Son gelen fiyat (WS → ref, render yok)
+    const dataRef = useRef([]);             // Grafik veri dizisi
     const wsRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const reconnectTimer = useRef(null);
@@ -44,7 +43,7 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-
+    // WebSocket bağlantısı — bağlantı koptuğunda exponential backoff ile yeniden bağlanır
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -59,6 +58,7 @@ export default function LiveTradingView() {
             reconnectAttempts.current = 0;
         };
 
+        // Her trade mesajında sadece ref güncellenir — state yazılmaz, render tetiklenmez
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             const price = parseFloat(data.p);
@@ -72,6 +72,7 @@ export default function LiveTradingView() {
             if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
         };
 
+        // Otomatik yeniden bağlanma (exponential backoff)
         ws.onclose = () => {
             setIsConnected(false);
             if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
@@ -84,19 +85,23 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, []);
 
+    // Ana effect: WS bağlantısı + grafik tick + UI tick başlatır
     useEffect(() => {
         connectWebSocket();
 
+        // Grafik tick: her 250ms'de son fiyatı grafiğe ekler (React dışı, doğrudan ApexCharts)
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
             dataRef.current.push({ x: Date.now(), y: price });
 
+            // Sliding window: eski noktaları kaldır
             if (dataRef.current.length > MAX_DATA_POINTS) {
                 dataRef.current.splice(0, dataRef.current.length - MAX_DATA_POINTS);
             }
 
+            // Grafiği React render döngüsü dışında güncelle
             if (chartReady.current) {
                 ApexCharts.exec(CHART_ID, 'updateSeries', [
                     { data: dataRef.current },
@@ -104,6 +109,7 @@ export default function LiveTradingView() {
             }
         }, THROTTLE_MS);
 
+        // UI tick: her 500ms'de metrik state'ini günceller (React re-render burada tetiklenir)
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -118,6 +124,7 @@ export default function LiveTradingView() {
             }));
         }, UI_UPDATE_MS);
 
+        // Cleanup: WS, timer ve interval'leri temizle
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
@@ -126,14 +133,16 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket]);
 
-
+    // Metriklerden destructure
     const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
+    // Fiyat yönü: yukarı / aşağı / nötr
     const priceDirection = useMemo(() => {
         if (currentPrice === null || prevPrice === null) return 'neutral';
         return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
     }, [currentPrice, prevPrice]);
 
+    // ApexCharts konfigürasyonu — sabit, asla değişmez (re-render tetiklemez)
     const chartOptions = useMemo(() => ({
         chart: {
             id: CHART_ID,
@@ -141,10 +150,7 @@ export default function LiveTradingView() {
             animations: {
                 enabled: true,
                 easing: 'linear',
-                dynamicAnimation: {
-                    enabled: true,
-                    speed: THROTTLE_MS,
-                },
+                dynamicAnimation: { enabled: true, speed: THROTTLE_MS },
                 animateGradually: { enabled: false },
             },
             toolbar: { show: false },
@@ -209,14 +215,16 @@ export default function LiveTradingView() {
         theme: { mode: 'dark' },
     }), []);
 
+    // Boş başlangıç serisi — Chart mount olduktan sonra ApexCharts.exec ile güncellenir
     const initialSeries = useMemo(() => [{ name: 'BTC/USDT', data: [] }], []);
 
-
+    // Format yardımcıları
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
     const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
     const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
     const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
 
+    // Canlı saat
     const [currentTime, setCurrentTime] = useState(new Date());
     useEffect(() => {
         const t = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -225,7 +233,7 @@ export default function LiveTradingView() {
 
     return (
         <div className="dashboard-container">
-            {/* ═══ HEADER ═══ */}
+            {/* Header */}
             <header className="dashboard-header">
                 <div className="header-left">
                     <div className="header-logo">
@@ -248,9 +256,9 @@ export default function LiveTradingView() {
                 </div>
             </header>
 
-            {/* ═══ MAIN ═══ */}
+            {/* Ana İçerik */}
             <main className="dashboard-main">
-                {/* ─ Price Hero ─ */}
+                {/* Fiyat Kartı */}
                 <div className="price-hero-card">
                     <div className="price-hero-content">
                         <div className="asset-info">
@@ -298,22 +306,18 @@ export default function LiveTradingView() {
                     </div>
                 </div>
 
-                {/* ─ Chart ─ */}
+                {/* Grafik */}
                 <div className="chart-card">
                     <div className="chart-card-header">
-                        <div className="chart-card-title-row">
-                            <h3 className="chart-card-title">
-                                <Activity size={18} className="chart-title-icon" />
-                                Price Chart
-                            </h3>
-                        </div>
+                        <h3 className="chart-card-title">
+                            <Activity size={18} className="chart-title-icon" />
+                            Price Chart
+                        </h3>
                     </div>
                     <div className="chart-area">
                         <Chart options={chartOptions} series={initialSeries} type="area" height="100%" width="100%" />
                     </div>
                 </div>
-
-
             </main>
         </div>
     );

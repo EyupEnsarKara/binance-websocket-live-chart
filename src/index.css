@@ -1,17 +1,14 @@
 @import "tailwindcss";
 
-/* ═══════════════════════════════════════════════════════════════════
-   🎨 CryptoFlow — Dark Terminal Theme
-   Slate/Zinc professional trading terminal aesthetic
-   ═══════════════════════════════════════════════════════════════════ */
+/* CryptoFlow — Koyu terminal teması */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
+/* Tema değişkenleri */
 :root {
   --bg-primary: #0a0e17;
   --bg-secondary: #0f1629;
   --bg-card: #111827;
-  --bg-card-hover: #1a2236;
   --border-primary: #1e293b;
   --border-subtle: #162032;
   --text-primary: #f1f5f9;
@@ -21,15 +18,10 @@
   --accent-green-dim: rgba(16, 185, 129, 0.15);
   --accent-red: #ef4444;
   --accent-red-dim: rgba(239, 68, 68, 0.15);
-  --accent-blue: #3b82f6;
-  --accent-blue-dim: rgba(59, 130, 246, 0.15);
-  --accent-purple: #a855f7;
-  --accent-purple-dim: rgba(168, 85, 247, 0.15);
   --accent-amber: #f59e0b;
-  --shadow-glow-green: 0 0 20px rgba(16, 185, 129, 0.15);
-  --shadow-glow-red: 0 0 20px rgba(239, 68, 68, 0.15);
 }
 
+/* Reset */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -52,7 +44,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ════════════════════ DASHBOARD CONTAINER ════════════════════ */
+/* Sayfa düzeni */
 .dashboard-container {
   display: flex;
   flex-direction: column;
@@ -62,7 +54,7 @@ body {
   overflow: hidden;
 }
 
-/* ════════════════════ HEADER ════════════════════ */
+/* Header */
 .dashboard-header {
   display: flex;
   align-items: center;
@@ -128,6 +120,7 @@ body {
   color: var(--text-secondary);
 }
 
+/* Bağlantı durumu badge'i */
 .connection-badge {
   display: flex;
   align-items: center;
@@ -153,6 +146,7 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
+/* Bağlantı durumu noktası (yeşil: bağlı, kırmızı: kopuk) */
 .connection-dot {
   width: 8px;
   height: 8px;
@@ -183,19 +177,7 @@ body {
   }
 }
 
-@keyframes pulse-green {
-
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.3);
-  }
-
-  50% {
-    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-  }
-}
-
-/* ════════════════════ MAIN AREA ════════════════════ */
+/* Ana içerik alanı */
 .dashboard-main {
   flex: 1;
   display: flex;
@@ -206,7 +188,7 @@ body {
   min-height: 0;
 }
 
-/* ════════════════════ PRICE HERO CARD ════════════════════ */
+/* Fiyat kartı */
 .price-hero-card {
   background: var(--bg-card);
   border-radius: 16px;
@@ -227,6 +209,7 @@ body {
   margin-bottom: 16px;
 }
 
+/* Varlık bilgisi (Bitcoin ikonu + isim) */
 .asset-info {
   display: flex;
   align-items: center;
@@ -263,6 +246,7 @@ body {
   margin-top: 2px;
 }
 
+/* Fiyat gösterimi */
 .price-display {
   text-align: right;
 }
@@ -292,6 +276,7 @@ body {
   color: var(--text-primary);
 }
 
+/* Fiyat yönü ok animasyonu */
 .price-arrow {
   animation: arrow-bounce 0.5s ease;
 }
@@ -313,6 +298,7 @@ body {
   }
 }
 
+/* Fiyat değişim badge'i */
 .price-change {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
@@ -338,7 +324,7 @@ body {
   background: rgba(100, 116, 139, 0.1);
 }
 
-/* ─── Mini Stats Row ─── */
+/* Oturum istatistikleri satırı */
 .mini-stats-row {
   display: flex;
   align-items: center;
@@ -384,7 +370,7 @@ body {
   background: var(--border-subtle);
 }
 
-/* ════════════════════ CHART CARD ════════════════════ */
+/* Grafik kartı */
 .chart-card {
   flex: 1;
   display: flex;
@@ -402,12 +388,6 @@ body {
   flex-shrink: 0;
 }
 
-.chart-card-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
 .chart-card-title {
   display: flex;
   align-items: center;
@@ -421,21 +401,6 @@ body {
   color: var(--accent-green);
 }
 
-.chart-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 10px;
-  font-weight: 500;
-  font-family: 'JetBrains Mono', monospace;
-  background: var(--bg-secondary);
-  color: var(--text-muted);
-  border: 1px solid var(--border-primary);
-  letter-spacing: 0.02em;
-}
-
 .chart-area {
   flex: 1;
   padding: 8px 8px 0 8px;
@@ -446,14 +411,10 @@ body {
   height: 100% !important;
 }
 
-
-
-/* ════════════════════ APEXCHARTS OVERRIDES ════════════════════ */
+/* ApexCharts tema uyumu */
 .apexcharts-canvas {
   background: transparent !important;
 }
-
-
 
 .apexcharts-tooltip {
   background: var(--bg-card) !important;
@@ -476,7 +437,7 @@ body {
   border-radius: 6px !important;
 }
 
-/* ════════════════════ SCROLLBAR ════════════════════ */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
