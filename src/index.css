@@ -145,13 +145,42 @@ body {
   background: var(--accent-green-dim);
   color: var(--accent-green);
   border: 1px solid rgba(16, 185, 129, 0.3);
-  animation: pulse-green 2s ease-in-out infinite;
 }
 
 .connection-badge.disconnected {
   background: var(--accent-red-dim);
   color: var(--accent-red);
   border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connected .connection-dot {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.disconnected .connection-dot {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
+}
+
+@keyframes pulse-dot {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes pulse-green {
@@ -405,13 +434,6 @@ body {
   color: var(--text-muted);
   border: 1px solid var(--border-primary);
   letter-spacing: 0.02em;
-}
-
-.chart-badge.live-badge {
-  color: var(--accent-green);
-  background: var(--accent-green-dim);
-  border-color: rgba(16, 185, 129, 0.3);
-  animation: pulse-green 2s ease-in-out infinite;
 }
 
 .chart-area {
