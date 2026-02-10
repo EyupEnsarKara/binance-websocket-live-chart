@@ -26,9 +26,9 @@ npm run dev
 
 ### Teknolojiler
 
-- **React + Vite**
-- **ApexCharts / react-apexcharts**
-- **Tailwind CSS**
-- **Lucide React ikonlar**
+- **React + Vite** (React ^19.2.0, Vite ^7.3.1)
+- **ApexCharts / react-apexcharts** (react-apexcharts 1.7.0)
+- **Tailwind CSS** (^4.1.18)
+- **Lucide React ikonlar** (^0.563.0)
 - **Binance WebSocket API**
     
