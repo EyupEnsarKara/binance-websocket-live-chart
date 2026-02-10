@@ -30,7 +30,7 @@ import {
 
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 300;        // 300 × 100ms = 30 sn
+const MAX_DATA_POINTS = 500;        // 300 × 100ms = 30 sn
 const THROTTLE_MS = 100;            // Her 100ms'de 1 nokta → butter-smooth
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
