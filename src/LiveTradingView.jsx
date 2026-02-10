@@ -9,34 +9,18 @@ import {
     WifiOff,
     BarChart3,
     Clock,
-    Zap,
 } from 'lucide-react';
 
-// ─────────────────────────────────────────────────────────────────────
-// 🏗️ ARCHITECTURE NOTES — v4 (Butter-Smooth Streaming)
-//
-// ÖNCEKİ SORUNLAR:
-//   v1: chartData state → Chart re-mount → grafik baştan çizilir
-//   v2: ApexCharts.exec + tüm buffer → 100 nokta = 2sn veri, 60sn eksen → sıkışma
-//   v3: 250ms tick + animations:false → "tık tık" adım adım kayma
-//
-// ÇÖZÜM (v4):
-//   1. Tick hızı 250ms → 100ms: daha sık, daha küçük adımlar
-//   2. dynamicAnimation.speed = 100ms: her güncelleme smooth interpolasyon
-//   3. 300 nokta × 100ms = 30 saniyelik pencere (aynı zaman aralığı)
-//   4. CSS transition ile SVG path ek yumuşaklık
-//   5. initialAnimation kapalı = mount zıplaması yok
-// ─────────────────────────────────────────────────────────────────────
+
 
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 500;        // 300 × 100ms = 30 sn
-const THROTTLE_MS = 100;            // Her 100ms'de 1 nokta → butter-smooth
+const MAX_DATA_POINTS = 500;
+const THROTTLE_MS = 100;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 export default function LiveTradingView() {
-    // ─── UI State (sadece metrikleri günceller, Chart'ı DEĞİL) ───
     const [currentPrice, setCurrentPrice] = useState(null);
     const [prevPrice, setPrevPrice] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
@@ -44,11 +28,9 @@ export default function LiveTradingView() {
     const [sessionHigh, setSessionHigh] = useState(0);
     const [sessionLow, setSessionLow] = useState(Infinity);
     const [totalVolume, setTotalVolume] = useState(0);
-    const [dataPointCount, setDataPointCount] = useState(0);
 
-    // ─── Refs ───
-    const latestPriceRef = useRef(null);   // 🔑 Buffer yerine sadece son fiyat
-    const dataRef = useRef([]);            // Chart verisi (state dışı)
+    const latestPriceRef = useRef(null);
+    const dataRef = useRef([]);
     const wsRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const reconnectTimer = useRef(null);
@@ -61,7 +43,7 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    // ─── WebSocket ───
+
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -81,8 +63,6 @@ export default function LiveTradingView() {
             const price = parseFloat(data.p);
             const qty = parseFloat(data.q);
 
-            // 🔑 PERFORMANCE: Sadece son fiyatı tut. Her mesajda ref güncelle.
-            //    State'e YAZMA → sıfır re-render.
             latestPriceRef.current = price;
 
             statsRef.current.tradeCount += 1;
@@ -103,39 +83,27 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, []);
 
-    // ─── Throttled Tick: her 100ms'de 1 nokta ekle (butter-smooth) ───
     useEffect(() => {
         connectWebSocket();
 
-        // 🔑 Chart update tick — her 100ms'de yalnızca grafiği güncelle
-        //    React state'e DOKUNMAZ → sıfır re-render, sadece SVG path değişir
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            // 🔑 Her tick'te TAM 1 NOKTA ekle.
-            //    x = Date.now() → noktalar arası mesafe her zaman 100ms
-            //    Bu sayede grafik eşit aralıklı, düzgün bir çizgi oluşturur.
             const point = { x: Date.now(), y: price };
             dataRef.current.push(point);
 
-            // 🔑 SLIDING WINDOW: En fazla 300 nokta tut
             if (dataRef.current.length > MAX_DATA_POINTS) {
                 dataRef.current = dataRef.current.slice(-MAX_DATA_POINTS);
             }
 
-            // 🔑 ApexCharts.exec — React render döngüsü DIŞINDA güncelleme.
-            //    Chart bileşeni asla re-mount olmaz.
-            //    true = dynamicAnimation tetikle → smooth interpolasyon
             if (chartReady.current) {
                 ApexCharts.exec(CHART_ID, 'updateSeries', [
                     { data: [...dataRef.current] },
-                ], true);  // true = dynamicAnimation (smooth geçiş)
+                ], true);
             }
         }, THROTTLE_MS);
 
-        // 🔑 UI state tick — her 300ms'de metrik state'lerini güncelle
-        //    React re-render'ı sadece burada tetiklenir (3x daha seyrek)
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -148,7 +116,6 @@ export default function LiveTradingView() {
             setSessionHigh(statsRef.current.sessionHigh);
             setSessionLow(statsRef.current.sessionLow);
             setTotalVolume(statsRef.current.totalVolume);
-            setDataPointCount(dataRef.current.length);
         }, 300);
 
         return () => {
@@ -159,25 +126,22 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket]);
 
-    // ─── Price Direction ───
+
     const priceDirection = useMemo(() => {
         if (currentPrice === null || prevPrice === null) return 'neutral';
         return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
     }, [currentPrice, prevPrice]);
 
-    // ─── ApexCharts Config (DAİMA SABİT — asla değişmez) ───
     const chartOptions = useMemo(() => ({
         chart: {
             id: CHART_ID,
             type: 'area',
-            // 🔑 v4: initialAnimation kapalı (mount zıplaması yok)
-            //    dynamicAnimation açık + speed=THROTTLE_MS → her güncelleme smooth interpolasyon
             animations: {
                 enabled: true,
                 easing: 'linear',
                 dynamicAnimation: {
                     enabled: true,
-                    speed: THROTTLE_MS,  // 100ms → tick hızıyla senkron
+                    speed: THROTTLE_MS,
                 },
                 animateGradually: { enabled: false },
             },
@@ -214,7 +178,6 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
-            // 🔑 X-AXIS: Son 30 saniyelik pencere (120 nokta × 250ms)
             range: MAX_DATA_POINTS * THROTTLE_MS,
             labels: {
                 show: true,
@@ -244,10 +207,9 @@ export default function LiveTradingView() {
         theme: { mode: 'dark' },
     }), []);
 
-    // 🔑 Sabit boş seri — Chart bileşeni bununla mount olur, bir daha değişmez.
     const initialSeries = useMemo(() => [{ name: 'BTC/USDT', data: [] }], []);
 
-    // ─── Helpers ───
+
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
     const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
     const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
@@ -342,11 +304,7 @@ export default function LiveTradingView() {
                                 <Activity size={18} className="chart-title-icon" />
                                 Price Chart
                             </h3>
-                            <div className="chart-badges">
-                                <span className="chart-badge">30s Window</span>
-                                <span className="chart-badge"><Zap size={12} />{THROTTLE_MS}ms smooth</span>
-                                <span className="chart-badge data-badge">{dataPointCount}/{MAX_DATA_POINTS} pts</span>
-                            </div>
+                            <span className="chart-badge live-badge">● LIVE</span>
                         </div>
                     </div>
                     <div className="chart-area">
@@ -354,12 +312,7 @@ export default function LiveTradingView() {
                     </div>
                 </div>
 
-                {/* ─ Footer ─ */}
-                <div className="performance-footer">
-                    <div className="perf-item"><span className="perf-dot green" /><span>Ref-only data — zero re-renders on WS messages</span></div>
-                    <div className="perf-item"><span className="perf-dot blue" /><span>1 point/{THROTTLE_MS}ms — ApexCharts.exec() bypass</span></div>
-                    <div className="perf-item"><span className="perf-dot purple" /><span>Sliding window — {MAX_DATA_POINTS} pts max</span></div>
-                </div>
+
             </main>
         </div>
     );
