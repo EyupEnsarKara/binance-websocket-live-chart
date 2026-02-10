@@ -477,6 +477,17 @@ body {
   background: transparent !important;
 }
 
+/* 🔑 v4: SVG path smooth transition — grafik çizgisi ve alan dolgusu akıcı hareket eder */
+.apexcharts-area-series .apexcharts-series path {
+  transition: d 100ms linear;
+  will-change: d;
+}
+
+.apexcharts-line-series .apexcharts-series path {
+  transition: d 100ms linear;
+  will-change: d;
+}
+
 .apexcharts-tooltip {
   background: var(--bg-card) !important;
   border: 1px solid var(--border-primary) !important;

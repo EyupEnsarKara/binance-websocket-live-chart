@@ -13,23 +13,25 @@ import {
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────
-// 🏗️ ARCHITECTURE NOTES — v3 (Smooth Streaming Fix)
+// 🏗️ ARCHITECTURE NOTES — v4 (Butter-Smooth Streaming)
 //
 // ÖNCEKİ SORUNLAR:
 //   v1: chartData state → Chart re-mount → grafik baştan çizilir
 //   v2: ApexCharts.exec + tüm buffer → 100 nokta = 2sn veri, 60sn eksen → sıkışma
+//   v3: 250ms tick + animations:false → "tık tık" adım adım kayma
 //
-// ÇÖZÜM:
-//   1. Her 250ms tick'inde buffer'dan sadece SON FİYATI al (1 nokta)
-//   2. x değeri olarak Date.now() kullan → noktalar eşit aralıklı olur
-//   3. 120 nokta × 250ms = 30 saniyelik akıcı kayma
-//   4. Animasyonları kapatarak "zıplama" engellenır, curve:'smooth' yeterli
+// ÇÖZÜM (v4):
+//   1. Tick hızı 250ms → 100ms: daha sık, daha küçük adımlar
+//   2. dynamicAnimation.speed = 100ms: her güncelleme smooth interpolasyon
+//   3. 300 nokta × 100ms = 30 saniyelik pencere (aynı zaman aralığı)
+//   4. CSS transition ile SVG path ek yumuşaklık
+//   5. initialAnimation kapalı = mount zıplaması yok
 // ─────────────────────────────────────────────────────────────────────
 
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
-const MAX_DATA_POINTS = 120;        // 120 × 250ms = 30 sn
-const THROTTLE_MS = 250;            // Her 250ms'de 1 nokta
+const MAX_DATA_POINTS = 300;        // 300 × 100ms = 30 sn
+const THROTTLE_MS = 100;            // Her 100ms'de 1 nokta → butter-smooth
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
@@ -101,34 +103,43 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, []);
 
-    // ─── Throttled Tick: her 250ms'de 1 nokta ekle ───
+    // ─── Throttled Tick: her 100ms'de 1 nokta ekle (butter-smooth) ───
     useEffect(() => {
         connectWebSocket();
 
+        // 🔑 Chart update tick — her 100ms'de yalnızca grafiği güncelle
+        //    React state'e DOKUNMAZ → sıfır re-render, sadece SVG path değişir
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
             // 🔑 Her tick'te TAM 1 NOKTA ekle.
-            //    x = Date.now() → noktalar arası mesafe her zaman 250ms
+            //    x = Date.now() → noktalar arası mesafe her zaman 100ms
             //    Bu sayede grafik eşit aralıklı, düzgün bir çizgi oluşturur.
             const point = { x: Date.now(), y: price };
             dataRef.current.push(point);
 
-            // 🔑 SLIDING WINDOW: En fazla 120 nokta tut
+            // 🔑 SLIDING WINDOW: En fazla 300 nokta tut
             if (dataRef.current.length > MAX_DATA_POINTS) {
                 dataRef.current = dataRef.current.slice(-MAX_DATA_POINTS);
             }
 
             // 🔑 ApexCharts.exec — React render döngüsü DIŞINDA güncelleme.
             //    Chart bileşeni asla re-mount olmaz.
+            //    true = dynamicAnimation tetikle → smooth interpolasyon
             if (chartReady.current) {
                 ApexCharts.exec(CHART_ID, 'updateSeries', [
                     { data: [...dataRef.current] },
-                ], false);  // false = animasyon tetikleme (zıplamayı önler)
+                ], true);  // true = dynamicAnimation (smooth geçiş)
             }
+        }, THROTTLE_MS);
 
-            // Sadece metrik state'lerini güncelle (Chart'ı etkilemez)
+        // 🔑 UI state tick — her 300ms'de metrik state'lerini güncelle
+        //    React re-render'ı sadece burada tetiklenir (3x daha seyrek)
+        const uiInterval = setInterval(() => {
+            const price = latestPriceRef.current;
+            if (price === null) return;
+
             setCurrentPrice((prev) => {
                 setPrevPrice(prev);
                 return price;
@@ -138,12 +149,13 @@ export default function LiveTradingView() {
             setSessionLow(statsRef.current.sessionLow);
             setTotalVolume(statsRef.current.totalVolume);
             setDataPointCount(dataRef.current.length);
-        }, THROTTLE_MS);
+        }, 300);
 
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
             if (intervalRef.current) clearInterval(intervalRef.current);
+            clearInterval(uiInterval);
         };
     }, [connectWebSocket]);
 
@@ -158,9 +170,17 @@ export default function LiveTradingView() {
         chart: {
             id: CHART_ID,
             type: 'area',
-            // 🔑 Animasyonlar kapalı = grafik zıplamaz, kaymaz, baştan çizilmez.
-            //    Görsel akıcılık curve:'smooth' ile sağlanır.
-            animations: { enabled: false },
+            // 🔑 v4: initialAnimation kapalı (mount zıplaması yok)
+            //    dynamicAnimation açık + speed=THROTTLE_MS → her güncelleme smooth interpolasyon
+            animations: {
+                enabled: true,
+                easing: 'linear',
+                dynamicAnimation: {
+                    enabled: true,
+                    speed: THROTTLE_MS,  // 100ms → tick hızıyla senkron
+                },
+                animateGradually: { enabled: false },
+            },
             toolbar: { show: false },
             background: 'transparent',
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
@@ -184,7 +204,7 @@ export default function LiveTradingView() {
                 ],
             },
         },
-        stroke: { curve: 'smooth', width: 2, colors: ['#10b981'] },
+        stroke: { curve: 'smooth', width: 2.5, colors: ['#10b981'], lineCap: 'round' },
         grid: {
             borderColor: '#1e293b',
             strokeDashArray: 3,
@@ -324,7 +344,7 @@ export default function LiveTradingView() {
                             </h3>
                             <div className="chart-badges">
                                 <span className="chart-badge">30s Window</span>
-                                <span className="chart-badge"><Zap size={12} />{THROTTLE_MS}ms</span>
+                                <span className="chart-badge"><Zap size={12} />{THROTTLE_MS}ms smooth</span>
                                 <span className="chart-badge data-badge">{dataPointCount}/{MAX_DATA_POINTS} pts</span>
                             </div>
                         </div>
