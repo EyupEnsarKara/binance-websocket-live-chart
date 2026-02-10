@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, TrendingUp, TrendingDown, BarChart3, Clock, Zap, Wallet, ArrowUpRight, ArrowDownRight, Maximize2 } from 'lucide-react';
+import { Activity, BarChart3, Clock, Zap, Wallet, Maximize2 } from 'lucide-react';
 
-// UI Bileşenleri
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
-import { Badge } from './components/ui/badge';
-import { cn } from './lib/utils';
+// Shadcn UI Bileşenleri (Otomatik kurdukların)
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
-// --- LOGIC KISMI (DOKUNULMADI - AYNEN KORUNDU) ---
+// --- LOGIC KISMI (DOKUNULMADI - PERFORMANS İÇİN AYNEN KORUNDU) ---
 const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
 const CHART_ID = 'live-btc-chart';
 const MAX_DATA_POINTS = 300;
@@ -165,14 +165,13 @@ export default function LiveTradingView() {
             strokeDashArray: 4,
             xaxis: { lines: { show: true } },
             yaxis: { lines: { show: true } },
-            // ÖNEMLİ DEĞİŞİKLİK: Alt tarafta yazıların görünmesi için boşluk (bottom: 20)
             padding: { top: 0, right: 0, bottom: 20, left: 10 },
         },
         xaxis: {
             type: 'datetime',
             range: MAX_DATA_POINTS * THROTTLE_MS,
             labels: { 
-                show: true, // ÖNEMLİ DEĞİŞİKLİK: Etiketleri açtık
+                show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
                 datetimeFormatter: { 
                     year: 'yyyy', 
@@ -218,11 +217,11 @@ export default function LiveTradingView() {
         return () => clearInterval(t);
     }, []);
 
-    // --- YENİ UI LAYOUT (DATA TOP / CHART BOTTOM) ---
+    // --- RENDER (UI) ---
     return (
         <div className="min-h-screen bg-slate-950 text-slate-50 font-sans flex flex-col">
             
-            {/* 1. Header (Navbar) */}
+            {/* Navbar */}
             <header className="px-6 py-4 border-b border-slate-800/60 bg-slate-900/20 backdrop-blur-sm flex justify-between items-center sticky top-0 z-10">
                 <div className="flex items-center gap-3">
                     <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
@@ -244,13 +243,13 @@ export default function LiveTradingView() {
                 </div>
             </header>
 
-            {/* 2. Main Content Wrapper */}
+            {/* Main Content */}
             <main className="flex-1 p-4 md:p-6 flex flex-col gap-6 max-w-[1920px] mx-auto w-full">
                 
-                {/* --- ROW 1: DATA METRICS (GRID) --- */}
+                {/* Row 1: Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     
-                    {/* CARD 1: MAIN PRICE */}
+                    {/* Fiyat Kartı */}
                     <Card className="border-slate-800 bg-slate-900/40 relative overflow-hidden group">
                         <div className={cn("absolute top-0 right-0 w-24 h-24 bg-gradient-to-br opacity-5 blur-2xl rounded-full transition-all duration-500 group-hover:opacity-10", priceDirection === 'up' ? 'from-emerald-500' : 'from-red-500')} />
                         <CardHeader className="pb-2">
@@ -274,8 +273,7 @@ export default function LiveTradingView() {
                         </CardContent>
                     </Card>
 
-                    {/* CARD 2: 24H HIGH / LOW */}
-                    {/* CARD 2: 24H HIGH / LOW (Minimal) */}
+                    {/* Range Kartı */}
                     <Card className="border-slate-800 bg-slate-900/40">
                         <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
@@ -283,15 +281,12 @@ export default function LiveTradingView() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="flex flex-col justify-center gap-3 pt-2">
-                            {/* High */}
                             <div className="flex justify-between items-center border-b border-slate-800/50 pb-2">
                                 <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
                                 <span className="font-mono text-sm font-semibold text-emerald-400 tracking-tight">
                                     {sessionHigh > 0 ? fmt(sessionHigh) : '---'}
                                 </span>
                             </div>
-
-                            {/* Low */}
                             <div className="flex justify-between items-center pt-1">
                                 <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
                                 <span className="font-mono text-sm font-semibold text-red-400 tracking-tight">
@@ -301,7 +296,7 @@ export default function LiveTradingView() {
                         </CardContent>
                     </Card>
 
-                    {/* CARD 3: VOLUME */}
+                    {/* Hacim Kartı */}
                     <Card className="border-slate-800 bg-slate-900/40">
                          <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
@@ -316,7 +311,7 @@ export default function LiveTradingView() {
                         </CardContent>
                     </Card>
 
-                    {/* CARD 4: TRADES */}
+                    {/* İşlem Sayısı Kartı */}
                     <Card className="border-slate-800 bg-slate-900/40">
                          <CardHeader className="pb-2">
                             <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
@@ -338,7 +333,7 @@ export default function LiveTradingView() {
                     </Card>
                 </div>
 
-                {/* --- ROW 2: CHART (TAKES REMAINING SPACE) --- */}
+                {/* Row 2: Chart */}
                 <Card className="flex-1 min-h-[500px] border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl">
                     <CardHeader className="border-b border-slate-800/50 py-3 px-6 flex flex-row items-center justify-between bg-slate-900/50">
                         <div className="flex items-center gap-2">
@@ -353,7 +348,6 @@ export default function LiveTradingView() {
                         </div>
                     </CardHeader>
                     <CardContent className="flex-1 p-0 relative">
-                        {/* Grafik Konteyner: Absolute ile kaplasın ki resize sorunu olmasın */}
                         <div className="absolute inset-0 w-full h-full pb-2 pl-2">
                             <Chart 
                                 options={chartOptions} 
