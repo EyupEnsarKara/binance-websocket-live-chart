@@ -17,8 +17,7 @@ const CRYPTO_DATA = [
     { symbol: 'AVAX', name: 'Avalanche', pair: 'AVAX/USDT', price: 38.92, change: 4.56, volume: '55M', marketCap: '15B', logo: '▲' },
     { symbol: 'DOT', name: 'Polkadot', pair: 'DOT/USDT', price: 7.84, change: -0.45, volume: '42M', marketCap: '10B', logo: '●' },
     { symbol: 'LINK', name: 'Chainlink', pair: 'LINK/USDT', price: 18.23, change: 1.34, volume: '38M', marketCap: '11B', logo: '⬡' },
-    { symbol: 'MATIC', name: 'Polygon', pair: 'MATIC/USDT', price: 1.12, change: 2.87, volume: '31M', marketCap: '10B', logo: '⬠' },
-    { symbol: 'UNI', name: 'Uniswap', pair: 'UNI/USDT', price: 12.45, change: -1.56, volume: '28M', marketCap: '9.4B', logo: '🦄' },
+
 ];
 
 export default function CryptoPage() {
