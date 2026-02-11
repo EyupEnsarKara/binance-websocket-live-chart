@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { TrendingUp, ArrowUpRight, ArrowDownRight, Search, Building2 } from 'lucide-react';
+import { TrendingUp, ArrowUpRight, ArrowDownRight, Search, Bitcoin } from 'lucide-react';
 
-// Placeholder hisse verileri (ileride WebSocket/API ile gelecek)
+// Placeholder stock data (will come from WebSocket/API later)
 const STOCK_DATA = [
     { symbol: 'AAPL', name: 'Apple Inc.', price: 234.56, change: 1.23, volume: '52M', marketCap: '3.6T', sector: 'Technology' },
     { symbol: 'MSFT', name: 'Microsoft Corp.', price: 442.18, change: 0.87, volume: '28M', marketCap: '3.3T', sector: 'Technology' },
@@ -20,64 +21,63 @@ const STOCK_DATA = [
     { symbol: 'WMT', name: 'Walmart Inc.', price: 92.34, change: 1.45, volume: '7.8M', marketCap: '625B', sector: 'Consumer' },
 ];
 
-const SECTORS = ['Tümü', 'Technology', 'Financial', 'Consumer', 'Healthcare', 'Automotive'];
-
 export default function StockPage() {
     const [search, setSearch] = useState('');
-    const [selectedSector, setSelectedSector] = useState('Tümü');
+    const location = useLocation();
 
-    const filtered = STOCK_DATA.filter((s) => {
-        const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-            s.symbol.toLowerCase().includes(search.toLowerCase());
-        const matchSector = selectedSector === 'Tümü' || s.sector === selectedSector;
-        return matchSearch && matchSector;
-    });
+    const filtered = STOCK_DATA.filter((s) =>
+        s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.symbol.toLowerCase().includes(search.toLowerCase())
+    );
 
     const fmt = (price) => `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+    const isCrypto = location.pathname === '/' || location.pathname.startsWith('/crypto');
+    const isStocks = location.pathname.startsWith('/stocks');
+
     return (
         <main className="flex-1 p-4 md:p-6 max-w-[1920px] mx-auto w-full">
-            {/* Page Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                <div>
-                    <div className="flex items-center gap-3 mb-1">
-                        <div className="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">
-                            <TrendingUp className="text-blue-500" size={20} />
-                        </div>
-                        <h2 className="text-2xl font-bold tracking-tight">Hisse Senedi Piyasaları</h2>
-                    </div>
-                    <p className="text-sm text-slate-500 ml-12">ABD borsalarından anlık hisse senedi verileri</p>
+            {/* Header with Tab Switcher */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                {/* Tab Switcher */}
+                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1">
+                    <Link
+                        to="/"
+                        className={cn(
+                            "flex items-center gap-2 px-5 py-2 rounded-md text-sm font-medium transition-all duration-200",
+                            isCrypto
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                        )}
+                    >
+                        <Bitcoin size={16} />
+                        Crypto
+                    </Link>
+                    <Link
+                        to="/stocks"
+                        className={cn(
+                            "flex items-center gap-2 px-5 py-2 rounded-md text-sm font-medium transition-all duration-200",
+                            isStocks
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                        )}
+                    >
+                        <TrendingUp size={16} />
+                        Stocks
+                    </Link>
                 </div>
 
                 {/* Search */}
-                <div className="relative w-full md:w-72">
+                <div className="relative w-full sm:w-72">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                     <input
                         type="text"
-                        placeholder="Ara... (AAPL, Tesla)"
+                        placeholder="Search... (AAPL, Tesla)"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-10 pr-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 transition-all"
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-10 pr-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
                     />
                 </div>
-            </div>
-
-            {/* Sector Filters */}
-            <div className="flex flex-wrap gap-2 mb-6">
-                {SECTORS.map((sector) => (
-                    <button
-                        key={sector}
-                        onClick={() => setSelectedSector(sector)}
-                        className={cn(
-                            "px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 border",
-                            selectedSector === sector
-                                ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
-                                : "bg-slate-900 text-slate-500 border-slate-800 hover:text-slate-300 hover:border-slate-700"
-                        )}
-                    >
-                        {sector}
-                    </button>
-                ))}
             </div>
 
             {/* Stock Grid */}
@@ -103,7 +103,7 @@ export default function StockPage() {
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center">
-                                            <span className="text-xs font-bold text-blue-400 font-mono">{stock.symbol.slice(0, 2)}</span>
+                                            <span className="text-xs font-bold text-emerald-400 font-mono">{stock.symbol.slice(0, 2)}</span>
                                         </div>
                                         <div>
                                             <h3 className="font-semibold text-sm text-slate-200">{stock.symbol}</h3>
@@ -131,26 +131,20 @@ export default function StockPage() {
                                             ? <ArrowUpRight size={14} className="text-emerald-500" />
                                             : <ArrowDownRight size={14} className="text-red-500" />
                                         }
-                                        <span className="text-xs text-slate-500">24h değişim</span>
+                                        <span className="text-xs text-slate-500">24h change</span>
                                     </div>
                                 </div>
 
                                 {/* Bottom stats */}
                                 <div className="flex justify-between pt-3 border-t border-slate-800/60">
                                     <div>
-                                        <p className="text-[10px] text-slate-600 uppercase">Hacim</p>
+                                        <p className="text-[10px] text-slate-600 uppercase">Volume</p>
                                         <p className="text-xs font-mono text-slate-400 font-medium">{stock.volume}</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[10px] text-slate-600 uppercase">Piyasa Değeri</p>
+                                        <p className="text-[10px] text-slate-600 uppercase">Market Cap</p>
                                         <p className="text-xs font-mono text-slate-400 font-medium">{stock.marketCap}</p>
                                     </div>
-                                </div>
-
-                                {/* Sector tag */}
-                                <div className="mt-3 flex items-center gap-1.5">
-                                    <Building2 size={10} className="text-slate-600" />
-                                    <span className="text-[10px] text-slate-600 font-medium">{stock.sector}</span>
                                 </div>
                             </CardContent>
                         </Card>
@@ -160,10 +154,9 @@ export default function StockPage() {
 
             {filtered.length === 0 && (
                 <div className="text-center py-20">
-                    <p className="text-slate-500 text-sm">Aramanızla eşleşen hisse bulunamadı.</p>
+                    <p className="text-slate-500 text-sm">No stocks found matching your search.</p>
                 </div>
             )}
         </main>
     );
 }
-

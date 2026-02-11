@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowUpRight, ArrowDownRight, Search } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Search, Bitcoin, TrendingUp } from 'lucide-react';
 
-// Placeholder kripto verileri (ileride WebSocket ile gelecek)
+// Placeholder crypto data (will come from WebSocket later)
 const CRYPTO_DATA = [
     { symbol: 'BTC', name: 'Bitcoin', pair: 'BTC/USDT', price: 97245.32, change: 2.45, volume: '1.2B', marketCap: '1.91T', logo: '₿' },
     { symbol: 'ETH', name: 'Ethereum', pair: 'ETH/USDT', price: 3412.18, change: 1.87, volume: '890M', marketCap: '410B', logo: 'Ξ' },
@@ -23,6 +23,7 @@ const CRYPTO_DATA = [
 
 export default function CryptoPage() {
     const [search, setSearch] = useState('');
+    const location = useLocation();
 
     const filtered = CRYPTO_DATA.filter((c) =>
         c.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -35,15 +36,47 @@ export default function CryptoPage() {
         return `$${price.toFixed(4)}`;
     };
 
+    const isCrypto = location.pathname === '/' || location.pathname.startsWith('/crypto');
+    const isStocks = location.pathname.startsWith('/stocks');
+
     return (
         <main className="flex-1 p-4 md:p-6 max-w-[1920px] mx-auto w-full">
-            {/* Search */}
-            <div className="flex justify-end mb-5">
-                <div className="relative w-full md:w-72">
+            {/* Header with Tab Switcher */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                {/* Tab Switcher */}
+                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1">
+                    <Link
+                        to="/"
+                        className={cn(
+                            "flex items-center gap-2 px-5 py-2 rounded-md text-sm font-medium transition-all duration-200",
+                            isCrypto
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                        )}
+                    >
+                        <Bitcoin size={16} />
+                        Crypto
+                    </Link>
+                    <Link
+                        to="/stocks"
+                        className={cn(
+                            "flex items-center gap-2 px-5 py-2 rounded-md text-sm font-medium transition-all duration-200",
+                            isStocks
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                        )}
+                    >
+                        <TrendingUp size={16} />
+                        Stocks
+                    </Link>
+                </div>
+
+                {/* Search */}
+                <div className="relative w-full sm:w-72">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                     <input
                         type="text"
-                        placeholder="Ara... (BTC, Ethereum)"
+                        placeholder="Search... (BTC, Ethereum)"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-10 pr-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
@@ -102,18 +135,18 @@ export default function CryptoPage() {
                                             ? <ArrowUpRight size={14} className="text-emerald-500" />
                                             : <ArrowDownRight size={14} className="text-red-500" />
                                         }
-                                        <span className="text-xs text-slate-500">24h değişim</span>
+                                        <span className="text-xs text-slate-500">24h change</span>
                                     </div>
                                 </div>
 
                                 {/* Bottom stats */}
                                 <div className="flex justify-between pt-3 border-t border-slate-800/60">
                                     <div>
-                                        <p className="text-[10px] text-slate-600 uppercase">Hacim</p>
+                                        <p className="text-[10px] text-slate-600 uppercase">Volume</p>
                                         <p className="text-xs font-mono text-slate-400 font-medium">{crypto.volume}</p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[10px] text-slate-600 uppercase">Piyasa Değeri</p>
+                                        <p className="text-[10px] text-slate-600 uppercase">Market Cap</p>
                                         <p className="text-xs font-mono text-slate-400 font-medium">{crypto.marketCap}</p>
                                     </div>
                                 </div>
@@ -126,10 +159,9 @@ export default function CryptoPage() {
 
             {filtered.length === 0 && (
                 <div className="text-center py-20">
-                    <p className="text-slate-500 text-sm">Aramanızla eşleşen kripto bulunamadı.</p>
+                    <p className="text-slate-500 text-sm">No crypto found matching your search.</p>
                 </div>
             )}
         </main>
     );
 }
-
