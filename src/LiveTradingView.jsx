@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, Zap, Wallet, Maximize2 } from 'lucide-react';
+import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart } from 'lucide-react';
 
 // Shadcn UI bileşenleri
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,19 +11,32 @@ import { cn } from "@/lib/utils";
 
 // Grafik ayarları
 const MAX_DATA_POINTS = 300;
+const DEFAULT_MAX_CANDLES = 90;
 const THROTTLE_MS = 250;
 const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+
+const CANDLE_INTERVALS = [
+    { value: 1000, label: '1s' },
+    { value: 5000, label: '5s' },
+    { value: 15000, label: '15s' },
+    { value: 30000, label: '30s' },
+    { value: 60000, label: '1m' },
+];
+
+const CANDLE_COUNTS = [30, 60, 90, 120, 200];
 
 export default function LiveTradingView() {
     const { symbol = 'btcusdt' } = useParams();
     const pairLabel = symbol.toUpperCase().replace('USDT', '/USDT');
 
     const WS_URL = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
-    const CHART_ID = `live-${symbol}-chart`;
 
-    // Bağlantı durumu ve ekranda gösterilen metrikler
+    // ── UI State ──
+    const [chartType, setChartType] = useState('area');
+    const [candleInterval, setCandleInterval] = useState(1000);
+    const [maxCandles, setMaxCandles] = useState(DEFAULT_MAX_CANDLES);
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState({
         currentPrice: null,
@@ -34,14 +47,20 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
-    // Sık güncellenen veriler için ref'ler
+    // ── Ref'ler (re-render tetiklemeden) ──
+    const chartTypeRef = useRef('area');
+    const candleIntervalRef = useRef(1000);
+    const maxCandlesRef = useRef(DEFAULT_MAX_CANDLES);
     const latestPriceRef = useRef(null);
-    const dataRef = useRef([]);
+    const areaDataRef = useRef([]);
+    const candleDataRef = useRef([]);
+    const currentCandleRef = useRef(null);
     const wsRef = useRef(null);
     const reconnectAttempts = useRef(0);
     const reconnectTimer = useRef(null);
     const intervalRef = useRef(null);
-    const chartReady = useRef(false);
+    const areaChartReady = useRef(false);
+    const candleChartReady = useRef(false);
     const statsRef = useRef({
         tradeCount: 0,
         sessionHigh: 0,
@@ -49,6 +68,16 @@ export default function LiveTradingView() {
         totalVolume: 0,
     });
 
+    // State değiştiğinde ref'leri de güncelle
+    useEffect(() => { chartTypeRef.current = chartType; }, [chartType]);
+    useEffect(() => { candleIntervalRef.current = candleInterval; }, [candleInterval]);
+    useEffect(() => { maxCandlesRef.current = maxCandles; }, [maxCandles]);
+
+    // Chart ID'leri
+    const areaChartId = `area-${symbol}`;
+    const candleChartId = `candle-${symbol}`;
+
+    // ── WebSocket bağlantısı ──
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -67,13 +96,46 @@ export default function LiveTradingView() {
             const data = JSON.parse(event.data);
             const price = parseFloat(data.p);
             const qty = parseFloat(data.q);
+            const now = Date.now();
 
             latestPriceRef.current = price;
 
+            // Metrik güncelleme
             statsRef.current.tradeCount += 1;
             statsRef.current.totalVolume += qty;
             if (price > statsRef.current.sessionHigh) statsRef.current.sessionHigh = price;
             if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
+
+            // ── Candlestick OHLC hesaplama (her trade'de) ──
+            const interval = candleIntervalRef.current;
+            const candle = currentCandleRef.current;
+
+            if (!candle || now >= candle.startTime + interval) {
+                // Önceki mumu kaydet
+                if (candle) {
+                    candleDataRef.current.push({
+                        x: new Date(candle.startTime),
+                        y: [candle.open, candle.high, candle.low, candle.close],
+                    });
+                    if (candleDataRef.current.length > maxCandlesRef.current) {
+                        candleDataRef.current.splice(0, candleDataRef.current.length - maxCandlesRef.current);
+                    }
+                }
+                // Yeni mum başlat
+                const candleStart = Math.floor(now / interval) * interval;
+                currentCandleRef.current = {
+                    startTime: candleStart,
+                    open: price,
+                    high: price,
+                    low: price,
+                    close: price,
+                };
+            } else {
+                // Mevcut mumu güncelle
+                candle.close = price;
+                if (price > candle.high) candle.high = price;
+                if (price < candle.low) candle.low = price;
+            }
         };
 
         ws.onclose = () => {
@@ -88,34 +150,55 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, [WS_URL]);
 
+    // ── Ana efekt: bağlantı + periyodik güncelleme ──
     useEffect(() => {
-        // Symbol değiştiğinde state'leri resetle
+        // Reset
         latestPriceRef.current = null;
-        dataRef.current = [];
-        chartReady.current = false;
+        areaDataRef.current = [];
+        candleDataRef.current = [];
+        currentCandleRef.current = null;
+        areaChartReady.current = false;
+        candleChartReady.current = false;
         statsRef.current = { tradeCount: 0, sessionHigh: 0, sessionLow: Infinity, totalVolume: 0 };
         setMetrics({ currentPrice: null, prevPrice: null, tradeCount: 0, sessionHigh: 0, sessionLow: Infinity, totalVolume: 0 });
         setIsConnected(false);
 
         connectWebSocket();
 
+        // Grafik güncelleme döngüsü
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            dataRef.current.push({ x: Date.now(), y: price });
-
-            if (dataRef.current.length > MAX_DATA_POINTS) {
-                dataRef.current.splice(0, dataRef.current.length - MAX_DATA_POINTS);
+            // ── Area grafiğini güncelle ──
+            areaDataRef.current.push({ x: Date.now(), y: price });
+            if (areaDataRef.current.length > MAX_DATA_POINTS) {
+                areaDataRef.current.splice(0, areaDataRef.current.length - MAX_DATA_POINTS);
+            }
+            if (areaChartReady.current && chartTypeRef.current === 'area') {
+                ApexCharts.exec(areaChartId, 'updateSeries', [
+                    { data: areaDataRef.current },
+                ], false);
             }
 
-            if (chartReady.current) {
-                ApexCharts.exec(CHART_ID, 'updateSeries', [
-                    { data: dataRef.current },
+            // ── Candlestick grafiğini güncelle ──
+            if (candleChartReady.current && chartTypeRef.current === 'candlestick') {
+                // Tamamlanmış mumlar + açık mum
+                const candle = currentCandleRef.current;
+                const allCandles = [...candleDataRef.current];
+                if (candle) {
+                    allCandles.push({
+                        x: new Date(candle.startTime),
+                        y: [candle.open, candle.high, candle.low, candle.close],
+                    });
+                }
+                ApexCharts.exec(candleChartId, 'updateSeries', [
+                    { data: allCandles },
                 ], false);
             }
         }, THROTTLE_MS);
 
+        // Metrik güncelleme döngüsü
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
@@ -136,7 +219,13 @@ export default function LiveTradingView() {
             if (intervalRef.current) clearInterval(intervalRef.current);
             clearInterval(uiInterval);
         };
-    }, [connectWebSocket, CHART_ID]);
+    }, [connectWebSocket, areaChartId, candleChartId]);
+
+    // candleInterval değiştiğinde mumları sıfırla
+    useEffect(() => {
+        candleDataRef.current = [];
+        currentCandleRef.current = null;
+    }, [candleInterval]);
 
     const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
@@ -145,9 +234,10 @@ export default function LiveTradingView() {
         return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
     }, [currentPrice, prevPrice]);
 
-    const chartOptions = useMemo(() => ({
+    // ── Area Chart Config ──
+    const areaChartOptions = useMemo(() => ({
         chart: {
-            id: CHART_ID,
+            id: areaChartId,
             type: 'area',
             animations: {
                 enabled: true,
@@ -160,25 +250,18 @@ export default function LiveTradingView() {
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             zoom: { enabled: false },
             events: {
-                mounted: () => { chartReady.current = true; },
+                mounted: () => { areaChartReady.current = true; },
             },
         },
         colors: ['#10b981'],
         fill: {
             type: 'gradient',
-            gradient: {
-                shadeIntensity: 1,
-                opacityFrom: 0.45,
-                opacityTo: 0.05,
-                stops: [0, 100],
-            },
+            gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 100] },
         },
         stroke: { curve: 'smooth', width: 2, colors: ['#10b981'] },
         grid: {
-            borderColor: '#1e293b',
-            strokeDashArray: 4,
-            xaxis: { lines: { show: true } },
-            yaxis: { lines: { show: true } },
+            borderColor: '#1e293b', strokeDashArray: 4,
+            xaxis: { lines: { show: true } }, yaxis: { lines: { show: true } },
             padding: { top: 0, right: 0, bottom: 20, left: 10 },
         },
         xaxis: {
@@ -187,19 +270,10 @@ export default function LiveTradingView() {
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
-                datetimeFormatter: {
-                    year: 'yyyy',
-                    month: "MMM 'yy",
-                    day: 'dd MMM',
-                    hour: 'HH:mm',
-                    minute: 'HH:mm:ss',
-                    second: 'HH:mm:ss'
-                },
+                datetimeFormatter: { hour: 'HH:mm', minute: 'HH:mm:ss', second: 'HH:mm:ss' },
                 datetimeUTC: false,
             },
-            axisBorder: { show: false },
-            axisTicks: { show: false },
-            tooltip: { enabled: false }
+            axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false },
         },
         yaxis: {
             labels: {
@@ -209,23 +283,83 @@ export default function LiveTradingView() {
             opposite: true,
         },
         tooltip: {
-            enabled: true,
-            theme: 'dark',
+            enabled: true, theme: 'dark',
             x: { format: 'HH:mm:ss' },
             y: { formatter: (v) => `$${v?.toFixed(2)}` },
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [CHART_ID]);
+    }), [areaChartId]);
 
-    const initialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
+    // ── Candlestick Chart Config ──
+    const candleChartOptions = useMemo(() => ({
+        chart: {
+            id: candleChartId,
+            type: 'candlestick',
+            animations: {
+                enabled: true,
+                easing: 'linear',
+                dynamicAnimation: { enabled: true, speed: THROTTLE_MS },
+                animateGradually: { enabled: false },
+            },
+            toolbar: { show: false },
+            background: 'transparent',
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            zoom: { enabled: false },
+            events: {
+                mounted: () => { candleChartReady.current = true; },
+            },
+        },
+        plotOptions: {
+            candlestick: {
+                colors: {
+                    upward: '#10b981',
+                    downward: '#ef4444',
+                },
+                wick: {
+                    useFillColor: true,
+                },
+            },
+        },
+        grid: {
+            borderColor: '#1e293b', strokeDashArray: 4,
+            xaxis: { lines: { show: true } }, yaxis: { lines: { show: true } },
+            padding: { top: 0, right: 0, bottom: 20, left: 10 },
+        },
+        xaxis: {
+            type: 'datetime',
+            labels: {
+                show: true,
+                style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
+                datetimeFormatter: { hour: 'HH:mm', minute: 'HH:mm:ss', second: 'HH:mm:ss' },
+                datetimeUTC: false,
+            },
+            axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false },
+        },
+        yaxis: {
+            labels: {
+                style: { colors: '#64748b', fontSize: '11px', fontFamily: "'JetBrains Mono', monospace" },
+                formatter: (v) => v ? `$${v.toFixed(2)}` : '',
+            },
+            opposite: true,
+            tooltip: { enabled: true },
+        },
+        tooltip: {
+            enabled: true,
+            theme: 'dark',
+        },
+        dataLabels: { enabled: false },
+        theme: { mode: 'dark' },
+    }), [candleChartId]);
 
+    const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
+    const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
+
+    // ── Yardımcı ──
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
     const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
-
     const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
     const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
-
     const priceColor = priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-200';
 
     return (
@@ -292,7 +426,7 @@ export default function LiveTradingView() {
                 <Card className="border-slate-800 bg-slate-900/40">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                            <Wallet size={12} />Volume
+                            <Wallet size={12} /> Volume
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -320,27 +454,119 @@ export default function LiveTradingView() {
 
             {/* Row 2: Chart */}
             <Card className="flex-1 min-h-[500px] border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl">
-                <CardHeader className="border-b border-slate-800/50 py-3 px-6 flex flex-row items-center justify-between bg-slate-900/50">
-                    <div className="flex items-center gap-2">
-                        <Activity size={16} className="text-emerald-500" />
-                        <span className="text-sm font-medium text-slate-300">Live Market Depth — {pairLabel}</span>
-                    </div>
-                    <div className="flex gap-4">
+                <CardHeader className="border-b border-slate-800/50 py-3 px-6 bg-slate-900/50">
+                    {/* Header Row */}
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            <Activity size={16} className="text-emerald-500" />
+                            <span className="text-sm font-medium text-slate-300">Live Market — {pairLabel}</span>
+                        </div>
                         <div className="flex items-center gap-1.5">
                             <span className={cn("w-1.5 h-1.5 rounded-full", isConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500")}></span>
-                            <span className="text-[10px] text-slate-400 uppercase">{isConnected ? 'Real-time' : 'Bağlanıyor...'}</span>
+                            <span className="text-[10px] text-slate-400 uppercase">{isConnected ? 'Real-time' : 'Connecting...'}</span>
                         </div>
                     </div>
+
+                    {/* Controls Row */}
+                    <div className="flex flex-wrap items-center gap-4">
+                        {/* Chart Type Toggle */}
+                        <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1">
+                            <button
+                                onClick={() => setChartType('area')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'area'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <AreaChart size={14} />
+                                Area
+                            </button>
+                            <button
+                                onClick={() => setChartType('candlestick')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'candlestick'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <CandlestickChart size={14} />
+                                Candles
+                            </button>
+                        </div>
+
+                        {/* Candlestick Controls */}
+                        {chartType === 'candlestick' && (
+                            <>
+                                {/* Interval */}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Interval</span>
+                                    <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                                        {CANDLE_INTERVALS.map((ci) => (
+                                            <button
+                                                key={ci.value}
+                                                onClick={() => setCandleInterval(ci.value)}
+                                                className={cn(
+                                                    "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
+                                                    candleInterval === ci.value
+                                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                                )}
+                                            >
+                                                {ci.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Candle Count */}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
+                                    <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                                        {CANDLE_COUNTS.map((count) => (
+                                            <button
+                                                key={count}
+                                                onClick={() => setMaxCandles(count)}
+                                                className={cn(
+                                                    "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
+                                                    maxCandles === count
+                                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                                )}
+                                            >
+                                                {count}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </CardHeader>
+
                 <CardContent className="flex-1 p-0 relative">
                     <div className="absolute inset-0 w-full h-full pb-2 pl-2">
-                        <Chart
-                            options={chartOptions}
-                            series={initialSeries}
-                            type="area"
-                            height="100%"
-                            width="100%"
-                        />
+                        {chartType === 'area' ? (
+                            <Chart
+                                key={`area-${symbol}`}
+                                options={areaChartOptions}
+                                series={areaInitialSeries}
+                                type="area"
+                                height="100%"
+                                width="100%"
+                            />
+                        ) : (
+                            <Chart
+                                key={`candle-${symbol}-${candleInterval}`}
+                                options={candleChartOptions}
+                                series={candleInitialSeries}
+                                type="candlestick"
+                                height="100%"
+                                width="100%"
+                            />
+                        )}
                     </div>
                 </CardContent>
             </Card>
