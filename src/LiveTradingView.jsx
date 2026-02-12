@@ -178,11 +178,16 @@ export default function LiveTradingView() {
             const price = latestPriceRef.current;
             if (price === null) return;
 
+            const now = Date.now();
+            const timeRange = dataCountRef.current * CANDLE_INTERVAL;
+            const xMin = now - timeRange;
+            const xMax = now;
+
             // ── Update Area chart ──
             // Calculate max area points based on dataCount (CANDLE_INTERVAL / THROTTLE_MS points per second)
             const pointsPerSecond = CANDLE_INTERVAL / THROTTLE_MS; // 4 points per second
             const maxAreaPoints = dataCountRef.current * pointsPerSecond;
-            areaDataRef.current.push({ x: Date.now(), y: price });
+            areaDataRef.current.push({ x: now, y: price });
             if (areaDataRef.current.length > maxAreaPoints) {
                 areaDataRef.current.splice(0, areaDataRef.current.length - maxAreaPoints);
             }
@@ -190,6 +195,9 @@ export default function LiveTradingView() {
                 ApexCharts.exec(areaChartId, 'updateSeries', [
                     { data: areaDataRef.current },
                 ], false);
+                ApexCharts.exec(areaChartId, 'updateOptions', {
+                    xaxis: { min: xMin, max: xMax }
+                }, false, false);
             }
 
             // ── Update Candlestick chart ──
@@ -206,6 +214,9 @@ export default function LiveTradingView() {
                 ApexCharts.exec(candleChartId, 'updateSeries', [
                     { data: allCandles },
                 ], false);
+                ApexCharts.exec(candleChartId, 'updateOptions', {
+                    xaxis: { min: xMin, max: xMax }
+                }, false, false);
             }
         }, THROTTLE_MS);
 
@@ -280,7 +291,6 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
-            range: sharedTimeRange,
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
@@ -303,7 +313,7 @@ export default function LiveTradingView() {
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [areaChartId, sharedTimeRange]);
+    }), [areaChartId]);
 
     // ── Candlestick Chart Config ──
     const candleChartOptions = useMemo(() => ({
@@ -342,7 +352,6 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
-            range: sharedTimeRange,
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
@@ -365,7 +374,7 @@ export default function LiveTradingView() {
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [candleChartId, sharedTimeRange]);
+    }), [candleChartId]);
 
     const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
     const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
