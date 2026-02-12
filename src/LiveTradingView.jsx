@@ -292,6 +292,9 @@ export default function LiveTradingView() {
     }), [areaChartId]);
 
     // ── Candlestick Chart Config ──
+    // Calculate fixed time range based on maxCandles and interval
+    const candleTimeRange = maxCandles * candleInterval;
+
     const candleChartOptions = useMemo(() => ({
         chart: {
             id: candleChartId,
@@ -328,6 +331,7 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
+            range: candleTimeRange,
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
@@ -350,7 +354,7 @@ export default function LiveTradingView() {
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [candleChartId]);
+    }), [candleChartId, candleTimeRange]);
 
     const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
     const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
