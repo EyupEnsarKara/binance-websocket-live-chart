@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart, TrendingUp, TrendingDown } from 'lucide-react';
+import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart, TrendingUp, TrendingDown, LayoutGrid } from 'lucide-react';
 
 // Shadcn UI components
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +18,7 @@ const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
-const CANDLE_COUNTS = [30, 60, 90, 120, 200];
+const DATA_COUNTS = [30, 60, 90, 120, 200];
 
 export default function LiveTradingView() {
     const { symbol = 'btcusdt' } = useParams();
@@ -28,8 +28,8 @@ export default function LiveTradingView() {
     const WS_URL = `wss://stream.binance.com:9443/stream?streams=${symbol.toLowerCase()}@trade/${symbol.toLowerCase()}@ticker`;
 
     // ── UI State ──
-    const [chartType, setChartType] = useState('area');
-    const [maxCandles, setMaxCandles] = useState(DEFAULT_MAX_CANDLES);
+    const [chartType, setChartType] = useState('area'); // 'area', 'candlestick', 'both'
+    const [dataCount, setDataCount] = useState(DEFAULT_MAX_CANDLES);
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState({
         currentPrice: null,
@@ -45,7 +45,7 @@ export default function LiveTradingView() {
 
     // ── Refs (no re-render) ──
     const chartTypeRef = useRef('area');
-    const maxCandlesRef = useRef(DEFAULT_MAX_CANDLES);
+    const dataCountRef = useRef(DEFAULT_MAX_CANDLES);
     const latestPriceRef = useRef(null);
     const areaDataRef = useRef([]);
     const candleDataRef = useRef([]);
@@ -68,7 +68,7 @@ export default function LiveTradingView() {
 
     // State değiştiğinde ref'leri de güncelle
     useEffect(() => { chartTypeRef.current = chartType; }, [chartType]);
-    useEffect(() => { maxCandlesRef.current = maxCandles; }, [maxCandles]);
+    useEffect(() => { dataCountRef.current = dataCount; }, [dataCount]);
 
     // Chart ID'leri
     const areaChartId = `area-${symbol}`;
@@ -111,8 +111,8 @@ export default function LiveTradingView() {
                             x: new Date(candle.startTime),
                             y: [candle.open, candle.high, candle.low, candle.close],
                         });
-                        if (candleDataRef.current.length > maxCandlesRef.current) {
-                            candleDataRef.current.splice(0, candleDataRef.current.length - maxCandlesRef.current);
+                        if (candleDataRef.current.length > dataCountRef.current) {
+                            candleDataRef.current.splice(0, candleDataRef.current.length - dataCountRef.current);
                         }
                     }
                     // Start new candle
@@ -179,18 +179,21 @@ export default function LiveTradingView() {
             if (price === null) return;
 
             // ── Update Area chart ──
+            // Calculate max area points based on dataCount (CANDLE_INTERVAL / THROTTLE_MS points per second)
+            const pointsPerSecond = CANDLE_INTERVAL / THROTTLE_MS; // 4 points per second
+            const maxAreaPoints = dataCountRef.current * pointsPerSecond;
             areaDataRef.current.push({ x: Date.now(), y: price });
-            if (areaDataRef.current.length > MAX_DATA_POINTS) {
-                areaDataRef.current.splice(0, areaDataRef.current.length - MAX_DATA_POINTS);
+            if (areaDataRef.current.length > maxAreaPoints) {
+                areaDataRef.current.splice(0, areaDataRef.current.length - maxAreaPoints);
             }
-            if (areaChartReady.current && chartTypeRef.current === 'area') {
+            if (areaChartReady.current && (chartTypeRef.current === 'area' || chartTypeRef.current === 'both')) {
                 ApexCharts.exec(areaChartId, 'updateSeries', [
                     { data: areaDataRef.current },
                 ], false);
             }
 
             // ── Update Candlestick chart ──
-            if (candleChartReady.current && chartTypeRef.current === 'candlestick') {
+            if (candleChartReady.current && (chartTypeRef.current === 'candlestick' || chartTypeRef.current === 'both')) {
                 // Completed candles + open candle
                 const candle = currentCandleRef.current;
                 const allCandles = [...candleDataRef.current];
@@ -241,7 +244,11 @@ export default function LiveTradingView() {
         return 'neutral';
     }, [priceChangePercent]);
 
+    // ── Shared time range for both charts (based on candlestick interval for sync) ──
+    const sharedTimeRange = dataCount * CANDLE_INTERVAL;
+
     // ── Area Chart Config ──
+
     const areaChartOptions = useMemo(() => ({
         chart: {
             id: areaChartId,
@@ -273,7 +280,7 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
-            range: MAX_DATA_POINTS * THROTTLE_MS,
+            range: sharedTimeRange,
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
@@ -296,12 +303,9 @@ export default function LiveTradingView() {
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [areaChartId]);
+    }), [areaChartId, sharedTimeRange]);
 
     // ── Candlestick Chart Config ──
-    // Calculate fixed time range based on maxCandles and fixed 1s interval
-    const candleTimeRange = maxCandles * CANDLE_INTERVAL;
-
     const candleChartOptions = useMemo(() => ({
         chart: {
             id: candleChartId,
@@ -338,7 +342,7 @@ export default function LiveTradingView() {
         },
         xaxis: {
             type: 'datetime',
-            range: candleTimeRange,
+            range: sharedTimeRange,
             labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
@@ -361,7 +365,7 @@ export default function LiveTradingView() {
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), [candleChartId, candleTimeRange]);
+    }), [candleChartId, sharedTimeRange]);
 
     const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
     const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
@@ -478,7 +482,10 @@ export default function LiveTradingView() {
             </div>
 
             {/* Row 2: Chart */}
-            <Card className="flex-1 min-h-[500px] border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl">
+            <Card className={cn(
+                "flex-1 border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl",
+                chartType === 'both' ? "min-h-[800px]" : "min-h-[500px]"
+            )}>
                 <CardHeader className="border-b border-slate-800/50 py-3 px-6 bg-slate-900/50">
                     {/* Header Row */}
                     <div className="flex items-center justify-between mb-3">
@@ -520,36 +527,75 @@ export default function LiveTradingView() {
                                 <CandlestickChart size={14} />
                                 Candles
                             </button>
+                            <button
+                                onClick={() => setChartType('both')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'both'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <LayoutGrid size={14} />
+                                Both
+                            </button>
                         </div>
 
-                        {/* Candle Count - only show for candlestick */}
-                        {chartType === 'candlestick' && (
-                            <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
-                                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-                                    {CANDLE_COUNTS.map((count) => (
-                                        <button
-                                            key={count}
-                                            onClick={() => setMaxCandles(count)}
-                                            className={cn(
-                                                "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
-                                                maxCandles === count
-                                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                                    : "text-slate-500 hover:text-slate-300 border border-transparent"
-                                            )}
-                                        >
-                                            {count}
-                                        </button>
-                                    ))}
-                                </div>
+                        {/* Data Count - works for all chart types */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
+                            <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                                {DATA_COUNTS.map((count) => (
+                                    <button
+                                        key={count}
+                                        onClick={() => setDataCount(count)}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
+                                            dataCount === count
+                                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                        )}
+                                    >
+                                        {count}
+                                    </button>
+                                ))}
                             </div>
-                        )}
+                        </div>
                     </div>
                 </CardHeader>
 
                 <CardContent className="flex-1 p-0 relative">
                     <div className="absolute inset-0 w-full h-full pb-2 pl-2">
-                        {chartType === 'area' ? (
+                        {chartType === 'both' ? (
+                            <div className="flex flex-col h-full gap-2">
+                                {/* Area Chart - Top Half */}
+                                <div className="flex-1 relative min-h-0">
+                                    <div className="absolute inset-0">
+                                        <Chart
+                                            key={`area-${symbol}`}
+                                            options={areaChartOptions}
+                                            series={areaInitialSeries}
+                                            type="area"
+                                            height="100%"
+                                            width="100%"
+                                        />
+                                    </div>
+                                </div>
+                                {/* Candlestick Chart - Bottom Half */}
+                                <div className="flex-1 relative min-h-0">
+                                    <div className="absolute inset-0">
+                                        <Chart
+                                            key={`candle-${symbol}`}
+                                            options={candleChartOptions}
+                                            series={candleInitialSeries}
+                                            type="candlestick"
+                                            height="100%"
+                                            width="100%"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : chartType === 'area' ? (
                             <Chart
                                 key={`area-${symbol}`}
                                 options={areaChartOptions}
