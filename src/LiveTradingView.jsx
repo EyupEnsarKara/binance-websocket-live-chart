@@ -9,21 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-// Grafik ayarları
+// Chart settings
 const MAX_DATA_POINTS = 300;
-const DEFAULT_MAX_CANDLES = 90;
+const DEFAULT_MAX_CANDLES = 60;
+const CANDLE_INTERVAL = 1000; // Fixed 1 second candles
 const THROTTLE_MS = 250;
 const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
-
-const CANDLE_INTERVALS = [
-    { value: 1000, label: '1s' },
-    { value: 5000, label: '5s' },
-    { value: 15000, label: '15s' },
-    { value: 30000, label: '30s' },
-    { value: 60000, label: '1m' },
-];
 
 const CANDLE_COUNTS = [30, 60, 90, 120, 200];
 
@@ -35,7 +28,6 @@ export default function LiveTradingView() {
 
     // ── UI State ──
     const [chartType, setChartType] = useState('area');
-    const [candleInterval, setCandleInterval] = useState(1000);
     const [maxCandles, setMaxCandles] = useState(DEFAULT_MAX_CANDLES);
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState({
@@ -49,7 +41,6 @@ export default function LiveTradingView() {
 
     // ── Ref'ler (re-render tetiklemeden) ──
     const chartTypeRef = useRef('area');
-    const candleIntervalRef = useRef(1000);
     const maxCandlesRef = useRef(DEFAULT_MAX_CANDLES);
     const latestPriceRef = useRef(null);
     const areaDataRef = useRef([]);
@@ -70,7 +61,6 @@ export default function LiveTradingView() {
 
     // State değiştiğinde ref'leri de güncelle
     useEffect(() => { chartTypeRef.current = chartType; }, [chartType]);
-    useEffect(() => { candleIntervalRef.current = candleInterval; }, [candleInterval]);
     useEffect(() => { maxCandlesRef.current = maxCandles; }, [maxCandles]);
 
     // Chart ID'leri
@@ -107,10 +97,9 @@ export default function LiveTradingView() {
             if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
 
             // ── Candlestick OHLC hesaplama (her trade'de) ──
-            const interval = candleIntervalRef.current;
             const candle = currentCandleRef.current;
 
-            if (!candle || now >= candle.startTime + interval) {
+            if (!candle || now >= candle.startTime + CANDLE_INTERVAL) {
                 // Önceki mumu kaydet
                 if (candle) {
                     candleDataRef.current.push({
@@ -122,7 +111,7 @@ export default function LiveTradingView() {
                     }
                 }
                 // Yeni mum başlat
-                const candleStart = Math.floor(now / interval) * interval;
+                const candleStart = Math.floor(now / CANDLE_INTERVAL) * CANDLE_INTERVAL;
                 currentCandleRef.current = {
                     startTime: candleStart,
                     open: price,
@@ -221,12 +210,6 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket, areaChartId, candleChartId]);
 
-    // candleInterval değiştiğinde mumları sıfırla
-    useEffect(() => {
-        candleDataRef.current = [];
-        currentCandleRef.current = null;
-    }, [candleInterval]);
-
     const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
 
     const priceDirection = useMemo(() => {
@@ -292,8 +275,8 @@ export default function LiveTradingView() {
     }), [areaChartId]);
 
     // ── Candlestick Chart Config ──
-    // Calculate fixed time range based on maxCandles and interval
-    const candleTimeRange = maxCandles * candleInterval;
+    // Calculate fixed time range based on maxCandles and fixed 1s interval
+    const candleTimeRange = maxCandles * CANDLE_INTERVAL;
 
     const candleChartOptions = useMemo(() => ({
         chart: {
@@ -501,51 +484,27 @@ export default function LiveTradingView() {
                             </button>
                         </div>
 
-                        {/* Candlestick Controls */}
+                        {/* Candle Count - only show for candlestick */}
                         {chartType === 'candlestick' && (
-                            <>
-                                {/* Interval */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Interval</span>
-                                    <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-                                        {CANDLE_INTERVALS.map((ci) => (
-                                            <button
-                                                key={ci.value}
-                                                onClick={() => setCandleInterval(ci.value)}
-                                                className={cn(
-                                                    "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
-                                                    candleInterval === ci.value
-                                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
-                                                )}
-                                            >
-                                                {ci.label}
-                                            </button>
-                                        ))}
-                                    </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
+                                <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                                    {CANDLE_COUNTS.map((count) => (
+                                        <button
+                                            key={count}
+                                            onClick={() => setMaxCandles(count)}
+                                            className={cn(
+                                                "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
+                                                maxCandles === count
+                                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                    : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                            )}
+                                        >
+                                            {count}
+                                        </button>
+                                    ))}
                                 </div>
-
-                                {/* Candle Count */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
-                                    <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-                                        {CANDLE_COUNTS.map((count) => (
-                                            <button
-                                                key={count}
-                                                onClick={() => setMaxCandles(count)}
-                                                className={cn(
-                                                    "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
-                                                    maxCandles === count
-                                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
-                                                )}
-                                            >
-                                                {count}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
+                            </div>
                         )}
                     </div>
                 </CardHeader>
@@ -563,7 +522,7 @@ export default function LiveTradingView() {
                             />
                         ) : (
                             <Chart
-                                key={`candle-${symbol}-${candleInterval}`}
+                                key={`candle-${symbol}`}
                                 options={candleChartOptions}
                                 series={candleInitialSeries}
                                 type="candlestick"
