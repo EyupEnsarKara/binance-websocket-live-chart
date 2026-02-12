@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart } from 'lucide-react';
+import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart, TrendingUp, TrendingDown } from 'lucide-react';
 
-// Shadcn UI bileşenleri
+// Shadcn UI components
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,8 @@ export default function LiveTradingView() {
     const { symbol = 'btcusdt' } = useParams();
     const pairLabel = symbol.toUpperCase().replace('USDT', '/USDT');
 
-    const WS_URL = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@trade`;
+    // Combined Stream URL - trade + 24hr ticker in single connection
+    const WS_URL = `wss://stream.binance.com:9443/stream?streams=${symbol.toLowerCase()}@trade/${symbol.toLowerCase()}@ticker`;
 
     // ── UI State ──
     const [chartType, setChartType] = useState('area');
@@ -33,13 +34,16 @@ export default function LiveTradingView() {
     const [metrics, setMetrics] = useState({
         currentPrice: null,
         prevPrice: null,
+        priceChange: 0,
+        priceChangePercent: 0,
+        high24h: 0,
+        low24h: 0,
+        volume24h: 0,
+        quoteVolume24h: 0,
         tradeCount: 0,
-        sessionHigh: 0,
-        sessionLow: Infinity,
-        totalVolume: 0,
     });
 
-    // ── Ref'ler (re-render tetiklemeden) ──
+    // ── Refs (no re-render) ──
     const chartTypeRef = useRef('area');
     const maxCandlesRef = useRef(DEFAULT_MAX_CANDLES);
     const latestPriceRef = useRef(null);
@@ -52,11 +56,14 @@ export default function LiveTradingView() {
     const intervalRef = useRef(null);
     const areaChartReady = useRef(false);
     const candleChartReady = useRef(false);
-    const statsRef = useRef({
+    const tickerRef = useRef({
+        priceChange: 0,
+        priceChangePercent: 0,
+        high24h: 0,
+        low24h: 0,
+        volume24h: 0,
+        quoteVolume24h: 0,
         tradeCount: 0,
-        sessionHigh: 0,
-        sessionLow: Infinity,
-        totalVolume: 0,
     });
 
     // State değiştiğinde ref'leri de güncelle
@@ -67,7 +74,7 @@ export default function LiveTradingView() {
     const areaChartId = `area-${symbol}`;
     const candleChartId = `candle-${symbol}`;
 
-    // ── WebSocket bağlantısı ──
+    // ── WebSocket Connection (Combined Stream) ──
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -83,47 +90,59 @@ export default function LiveTradingView() {
         };
 
         ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            const price = parseFloat(data.p);
-            const qty = parseFloat(data.q);
-            const now = Date.now();
+            const message = JSON.parse(event.data);
+            const stream = message.stream;
+            const data = message.data;
 
-            latestPriceRef.current = price;
+            // Handle trade stream
+            if (stream && stream.endsWith('@trade')) {
+                const price = parseFloat(data.p);
+                const now = Date.now();
 
-            // Metrik güncelleme
-            statsRef.current.tradeCount += 1;
-            statsRef.current.totalVolume += qty;
-            if (price > statsRef.current.sessionHigh) statsRef.current.sessionHigh = price;
-            if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
+                latestPriceRef.current = price;
 
-            // ── Candlestick OHLC hesaplama (her trade'de) ──
-            const candle = currentCandleRef.current;
+                // ── Candlestick OHLC calculation (on each trade) ──
+                const candle = currentCandleRef.current;
 
-            if (!candle || now >= candle.startTime + CANDLE_INTERVAL) {
-                // Önceki mumu kaydet
-                if (candle) {
-                    candleDataRef.current.push({
-                        x: new Date(candle.startTime),
-                        y: [candle.open, candle.high, candle.low, candle.close],
-                    });
-                    if (candleDataRef.current.length > maxCandlesRef.current) {
-                        candleDataRef.current.splice(0, candleDataRef.current.length - maxCandlesRef.current);
+                if (!candle || now >= candle.startTime + CANDLE_INTERVAL) {
+                    // Save previous candle
+                    if (candle) {
+                        candleDataRef.current.push({
+                            x: new Date(candle.startTime),
+                            y: [candle.open, candle.high, candle.low, candle.close],
+                        });
+                        if (candleDataRef.current.length > maxCandlesRef.current) {
+                            candleDataRef.current.splice(0, candleDataRef.current.length - maxCandlesRef.current);
+                        }
                     }
+                    // Start new candle
+                    const candleStart = Math.floor(now / CANDLE_INTERVAL) * CANDLE_INTERVAL;
+                    currentCandleRef.current = {
+                        startTime: candleStart,
+                        open: price,
+                        high: price,
+                        low: price,
+                        close: price,
+                    };
+                } else {
+                    // Update current candle
+                    candle.close = price;
+                    if (price > candle.high) candle.high = price;
+                    if (price < candle.low) candle.low = price;
                 }
-                // Yeni mum başlat
-                const candleStart = Math.floor(now / CANDLE_INTERVAL) * CANDLE_INTERVAL;
-                currentCandleRef.current = {
-                    startTime: candleStart,
-                    open: price,
-                    high: price,
-                    low: price,
-                    close: price,
+            }
+
+            // Handle 24hr ticker stream
+            if (stream && stream.endsWith('@ticker')) {
+                tickerRef.current = {
+                    priceChange: parseFloat(data.p),        // Price change
+                    priceChangePercent: parseFloat(data.P), // Price change percent
+                    high24h: parseFloat(data.h),            // High price 24h
+                    low24h: parseFloat(data.l),             // Low price 24h
+                    volume24h: parseFloat(data.v),          // Total traded base asset volume 24h
+                    quoteVolume24h: parseFloat(data.q),     // Total traded quote asset volume 24h
+                    tradeCount: parseInt(data.n),           // Total number of trades 24h
                 };
-            } else {
-                // Mevcut mumu güncelle
-                candle.close = price;
-                if (price > candle.high) candle.high = price;
-                if (price < candle.low) candle.low = price;
             }
         };
 
@@ -139,7 +158,7 @@ export default function LiveTradingView() {
         ws.onerror = () => { };
     }, [WS_URL]);
 
-    // ── Ana efekt: bağlantı + periyodik güncelleme ──
+    // ── Main effect: connection + periodic updates ──
     useEffect(() => {
         // Reset
         latestPriceRef.current = null;
@@ -148,18 +167,18 @@ export default function LiveTradingView() {
         currentCandleRef.current = null;
         areaChartReady.current = false;
         candleChartReady.current = false;
-        statsRef.current = { tradeCount: 0, sessionHigh: 0, sessionLow: Infinity, totalVolume: 0 };
-        setMetrics({ currentPrice: null, prevPrice: null, tradeCount: 0, sessionHigh: 0, sessionLow: Infinity, totalVolume: 0 });
+        tickerRef.current = { priceChange: 0, priceChangePercent: 0, high24h: 0, low24h: 0, volume24h: 0, quoteVolume24h: 0, tradeCount: 0 };
+        setMetrics({ currentPrice: null, prevPrice: null, priceChange: 0, priceChangePercent: 0, high24h: 0, low24h: 0, volume24h: 0, quoteVolume24h: 0, tradeCount: 0 });
         setIsConnected(false);
 
         connectWebSocket();
 
-        // Grafik güncelleme döngüsü
+        // Chart update loop
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            // ── Area grafiğini güncelle ──
+            // ── Update Area chart ──
             areaDataRef.current.push({ x: Date.now(), y: price });
             if (areaDataRef.current.length > MAX_DATA_POINTS) {
                 areaDataRef.current.splice(0, areaDataRef.current.length - MAX_DATA_POINTS);
@@ -170,9 +189,9 @@ export default function LiveTradingView() {
                 ], false);
             }
 
-            // ── Candlestick grafiğini güncelle ──
+            // ── Update Candlestick chart ──
             if (candleChartReady.current && chartTypeRef.current === 'candlestick') {
-                // Tamamlanmış mumlar + açık mum
+                // Completed candles + open candle
                 const candle = currentCandleRef.current;
                 const allCandles = [...candleDataRef.current];
                 if (candle) {
@@ -187,18 +206,22 @@ export default function LiveTradingView() {
             }
         }, THROTTLE_MS);
 
-        // Metrik güncelleme döngüsü
+        // Metrics update loop
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
+            const ticker = tickerRef.current;
             setMetrics((prev) => ({
                 currentPrice: price,
                 prevPrice: prev.currentPrice,
-                tradeCount: statsRef.current.tradeCount,
-                sessionHigh: statsRef.current.sessionHigh,
-                sessionLow: statsRef.current.sessionLow,
-                totalVolume: statsRef.current.totalVolume,
+                priceChange: ticker.priceChange,
+                priceChangePercent: ticker.priceChangePercent,
+                high24h: ticker.high24h,
+                low24h: ticker.low24h,
+                volume24h: ticker.volume24h,
+                quoteVolume24h: ticker.quoteVolume24h,
+                tradeCount: ticker.tradeCount,
             }));
         }, UI_UPDATE_MS);
 
@@ -210,12 +233,13 @@ export default function LiveTradingView() {
         };
     }, [connectWebSocket, areaChartId, candleChartId]);
 
-    const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
+    const { currentPrice, prevPrice, priceChange, priceChangePercent, high24h, low24h, volume24h, quoteVolume24h, tradeCount } = metrics;
 
     const priceDirection = useMemo(() => {
-        if (currentPrice === null || prevPrice === null) return 'neutral';
-        return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
-    }, [currentPrice, prevPrice]);
+        if (priceChangePercent > 0) return 'up';
+        if (priceChangePercent < 0) return 'down';
+        return 'neutral';
+    }, [priceChangePercent]);
 
     // ── Area Chart Config ──
     const areaChartOptions = useMemo(() => ({
@@ -342,11 +366,16 @@ export default function LiveTradingView() {
     const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
     const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
 
-    // ── Yardımcı ──
+    // ── Helpers ──
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
-    const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
-    const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
-    const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
+    const fmtVol = (v) => {
+        if (!v) return '---';
+        if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
+        if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+        if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
+        return v.toFixed(2);
+    };
+    const fmtNum = (n) => n ? n.toLocaleString('en-US') : '---';
     const priceColor = priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-200';
 
     return (
@@ -355,7 +384,7 @@ export default function LiveTradingView() {
             {/* Row 1: Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 
-                {/* Fiyat Kartı */}
+                {/* Price Card */}
                 <Card className="border-slate-800 bg-slate-900/40 relative overflow-hidden group">
                     <div className={cn("absolute top-0 right-0 w-24 h-24 bg-gradient-to-br opacity-5 blur-2xl rounded-full transition-all duration-500 group-hover:opacity-10", priceDirection === 'up' ? 'from-emerald-500' : 'from-red-500')} />
                     <CardHeader className="pb-2">
@@ -377,64 +406,73 @@ export default function LiveTradingView() {
                         </div>
                         <div className="flex items-center gap-2 mt-2">
                             <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'default'} className="bg-opacity-10 text-xs px-1.5">
-                                {chgPct > 0 ? '+' : ''}{chgPct.toFixed(2)}%
+                                {priceChangePercent > 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
                             </Badge>
-                            <span className="text-xs text-slate-500 font-mono">
-                                {chg > 0 ? '+' : ''}{chg.toFixed(2)}
+                            <span className={cn("text-xs font-mono", priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-500')}>
+                                {priceChange > 0 ? '+' : ''}{priceChange.toFixed(2)}
                             </span>
                         </div>
                     </CardContent>
                 </Card>
 
-                {/* Range Kartı */}
+                {/* 24h Range Card */}
                 <Card className="border-slate-800 bg-slate-900/40">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                            <Maximize2 size={12} /> Session Range
+                            <Maximize2 size={12} /> 24h Range
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-col justify-center gap-3 pt-2">
                         <div className="flex justify-between items-center border-b border-slate-800/50 pb-2">
-                            <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
+                            <div className="flex items-center gap-1.5">
+                                <TrendingUp size={12} className="text-emerald-500" />
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
+                            </div>
                             <span className="font-mono text-sm font-semibold text-emerald-400 tracking-tight">
-                                {sessionHigh > 0 ? fmt(sessionHigh) : '---'}
+                                {high24h > 0 ? fmt(high24h) : '---'}
                             </span>
                         </div>
                         <div className="flex justify-between items-center pt-1">
-                            <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
+                            <div className="flex items-center gap-1.5">
+                                <TrendingDown size={12} className="text-red-500" />
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
+                            </div>
                             <span className="font-mono text-sm font-semibold text-red-400 tracking-tight">
-                                {sessionLow < Infinity ? fmt(sessionLow) : '---'}
+                                {low24h > 0 ? fmt(low24h) : '---'}
                             </span>
                         </div>
                     </CardContent>
                 </Card>
 
-                {/* Hacim Kartı */}
+                {/* 24h Volume Card */}
                 <Card className="border-slate-800 bg-slate-900/40">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                            <Wallet size={12} /> Volume
+                            <Wallet size={12} /> 24h Volume
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
-                            {fmtVol(totalVolume)}
+                            {fmtVol(volume24h)}
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">Total traded</p>
+                        <p className="text-xs text-slate-500 mt-1 font-mono">
+                            ≈ ${fmtVol(quoteVolume24h)} USDT
+                        </p>
                     </CardContent>
                 </Card>
 
-                {/* İşlem Sayısı Kartı */}
+                {/* 24h Trades Card */}
                 <Card className="border-slate-800 bg-slate-900/40">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                            <Zap size={12} className="text-amber-500" /> Active Trades
+                            <Zap size={12} className="text-amber-500" /> 24h Trades
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
-                            {tradeCount.toLocaleString()}
+                            {fmtNum(tradeCount)}
                         </div>
+                        <p className="text-xs text-slate-500 mt-1">Total transactions</p>
                     </CardContent>
                 </Card>
             </div>
