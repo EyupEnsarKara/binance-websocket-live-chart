@@ -1,50 +1,80 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import Chart from 'react-apexcharts';
 import ApexCharts from 'apexcharts';
-import { Activity, BarChart3, Clock, Zap, Wallet, Maximize2 } from 'lucide-react';
+import { Activity, Zap, Wallet, Maximize2, AreaChart, CandlestickChart, TrendingUp, TrendingDown, LayoutGrid } from 'lucide-react';
 
-// Shadcn UI bileşenleri
+// Shadcn UI components
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-// WebSocket ve grafik ayarları
-const WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@trade';
-const CHART_ID = 'live-btc-chart';
+// Chart settings
 const MAX_DATA_POINTS = 300;
+const DEFAULT_MAX_CANDLES = 60;
+const CANDLE_INTERVAL = 1000; // Fixed 1 second candles
 const THROTTLE_MS = 250;
 const UI_UPDATE_MS = 500;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
+const DATA_COUNTS = [30, 60, 90, 120, 200];
+
 export default function LiveTradingView() {
-    // Bağlantı durumu ve ekranda gösterilen metrikler
+    const { symbol = 'btcusdt' } = useParams();
+    const pairLabel = symbol.toUpperCase().replace('USDT', '/USDT');
+
+    // Combined Stream URL - trade + 24hr ticker in single connection
+    const WS_URL = `wss://stream.binance.com:9443/stream?streams=${symbol.toLowerCase()}@trade/${symbol.toLowerCase()}@ticker`;
+
+    // ── UI State ──
+    const [chartType, setChartType] = useState('area'); // 'area', 'candlestick', 'both'
+    const [dataCount, setDataCount] = useState(DEFAULT_MAX_CANDLES);
     const [isConnected, setIsConnected] = useState(false);
     const [metrics, setMetrics] = useState({
         currentPrice: null,
         prevPrice: null,
+        priceChange: 0,
+        priceChangePercent: 0,
+        high24h: 0,
+        low24h: 0,
+        volume24h: 0,
+        quoteVolume24h: 0,
         tradeCount: 0,
-        sessionHigh: 0,
-        sessionLow: Infinity,
-        totalVolume: 0,
     });
 
-    // Sık güncellenen veriler için ref'ler (re-render tetiklemeden saklanıyor)
-    const latestPriceRef = useRef(null);      // Son fiyat
-    const dataRef = useRef([]);              // Grafiğe giden ham veri
-    const wsRef = useRef(null);              // WebSocket nesnesi
-    const reconnectAttempts = useRef(0);     // Yeniden bağlanma sayacı
-    const reconnectTimer = useRef(null);     // Yeniden bağlanma zamanlayıcısı
-    const intervalRef = useRef(null);        // Grafik güncelleme aralığı
-    const chartReady = useRef(false);        // Grafik DOM'a oturdu mu
-    const statsRef = useRef({
+    // ── Refs (no re-render) ──
+    const chartTypeRef = useRef('area');
+    const dataCountRef = useRef(DEFAULT_MAX_CANDLES);
+    const latestPriceRef = useRef(null);
+    const areaDataRef = useRef([]);
+    const candleDataRef = useRef([]);
+    const currentCandleRef = useRef(null);
+    const wsRef = useRef(null);
+    const reconnectAttempts = useRef(0);
+    const reconnectTimer = useRef(null);
+    const intervalRef = useRef(null);
+    const areaChartReady = useRef(false);
+    const candleChartReady = useRef(false);
+    const tickerRef = useRef({
+        priceChange: 0,
+        priceChangePercent: 0,
+        high24h: 0,
+        low24h: 0,
+        volume24h: 0,
+        quoteVolume24h: 0,
         tradeCount: 0,
-        sessionHigh: 0,
-        sessionLow: Infinity,
-        totalVolume: 0,
     });
 
-    // Binance stream'e bağlanan ve temel event'leri yöneten fonksiyon
+    // State değiştiğinde ref'leri de güncelle
+    useEffect(() => { chartTypeRef.current = chartType; }, [chartType]);
+    useEffect(() => { dataCountRef.current = dataCount; }, [dataCount]);
+
+    // Chart ID'leri
+    const areaChartId = `area-${symbol}`;
+    const candleChartId = `candle-${symbol}`;
+
+    // ── WebSocket Connection (Combined Stream) ──
     const connectWebSocket = useCallback(() => {
         if (wsRef.current) {
             wsRef.current.onclose = null;
@@ -59,21 +89,63 @@ export default function LiveTradingView() {
             reconnectAttempts.current = 0;
         };
 
-        // Her yeni trade geldiğinde metrikleri güncelle
         ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            const price = parseFloat(data.p);
-            const qty = parseFloat(data.q);
+            const message = JSON.parse(event.data);
+            const stream = message.stream;
+            const data = message.data;
 
-            latestPriceRef.current = price;
+            // Handle trade stream
+            if (stream && stream.endsWith('@trade')) {
+                const price = parseFloat(data.p);
+                const now = Date.now();
 
-            statsRef.current.tradeCount += 1;
-            statsRef.current.totalVolume += qty;
-            if (price > statsRef.current.sessionHigh) statsRef.current.sessionHigh = price;
-            if (price < statsRef.current.sessionLow) statsRef.current.sessionLow = price;
+                latestPriceRef.current = price;
+
+                // ── Candlestick OHLC calculation (on each trade) ──
+                const candle = currentCandleRef.current;
+
+                if (!candle || now >= candle.startTime + CANDLE_INTERVAL) {
+                    // Save previous candle
+                    if (candle) {
+                        candleDataRef.current.push({
+                            x: new Date(candle.startTime),
+                            y: [candle.open, candle.high, candle.low, candle.close],
+                        });
+                        if (candleDataRef.current.length > dataCountRef.current) {
+                            candleDataRef.current.splice(0, candleDataRef.current.length - dataCountRef.current);
+                        }
+                    }
+                    // Start new candle
+                    const candleStart = Math.floor(now / CANDLE_INTERVAL) * CANDLE_INTERVAL;
+                    currentCandleRef.current = {
+                        startTime: candleStart,
+                        open: price,
+                        high: price,
+                        low: price,
+                        close: price,
+                    };
+                } else {
+                    // Update current candle
+                    candle.close = price;
+                    if (price > candle.high) candle.high = price;
+                    if (price < candle.low) candle.low = price;
+                }
+            }
+
+            // Handle 24hr ticker stream
+            if (stream && stream.endsWith('@ticker')) {
+                tickerRef.current = {
+                    priceChange: parseFloat(data.p),        // Price change
+                    priceChangePercent: parseFloat(data.P), // Price change percent
+                    high24h: parseFloat(data.h),            // High price 24h
+                    low24h: parseFloat(data.l),             // Low price 24h
+                    volume24h: parseFloat(data.v),          // Total traded base asset volume 24h
+                    quoteVolume24h: parseFloat(data.q),     // Total traded quote asset volume 24h
+                    tradeCount: parseInt(data.n),           // Total number of trades 24h
+                };
+            }
         };
 
-        // Bağlantı kapanınca durumu güncelle ve kademeli yeniden bağlanmayı başlat
         ws.onclose = () => {
             setIsConnected(false);
             if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
@@ -84,66 +156,102 @@ export default function LiveTradingView() {
         };
 
         ws.onerror = () => { };
-    }, []);
+    }, [WS_URL]);
 
-    // İlk yüklemede WebSocket'e bağlan, grafiği ve metrikleri periyodik güncelle
+    // ── Main effect: connection + periodic updates ──
     useEffect(() => {
+        // Reset
+        latestPriceRef.current = null;
+        areaDataRef.current = [];
+        candleDataRef.current = [];
+        currentCandleRef.current = null;
+        areaChartReady.current = false;
+        candleChartReady.current = false;
+        tickerRef.current = { priceChange: 0, priceChangePercent: 0, high24h: 0, low24h: 0, volume24h: 0, quoteVolume24h: 0, tradeCount: 0 };
+        setMetrics({ currentPrice: null, prevPrice: null, priceChange: 0, priceChangePercent: 0, high24h: 0, low24h: 0, volume24h: 0, quoteVolume24h: 0, tradeCount: 0 });
+        setIsConnected(false);
+
         connectWebSocket();
 
-        // Grafiğe giden veri akışı (THROTTLE_MS aralığında)
+        // Chart update loop
         intervalRef.current = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
-            dataRef.current.push({ x: Date.now(), y: price });
-
-            if (dataRef.current.length > MAX_DATA_POINTS) {
-                dataRef.current.splice(0, dataRef.current.length - MAX_DATA_POINTS);
+            // ── Update Area chart ──
+            // Calculate max area points based on dataCount (CANDLE_INTERVAL / THROTTLE_MS points per second)
+            const pointsPerSecond = CANDLE_INTERVAL / THROTTLE_MS; // 4 points per second
+            const maxAreaPoints = dataCountRef.current * pointsPerSecond;
+            areaDataRef.current.push({ x: Date.now(), y: price });
+            if (areaDataRef.current.length > maxAreaPoints) {
+                areaDataRef.current.splice(0, areaDataRef.current.length - maxAreaPoints);
+            }
+            if (areaChartReady.current && (chartTypeRef.current === 'area' || chartTypeRef.current === 'both')) {
+                ApexCharts.exec(areaChartId, 'updateSeries', [
+                    { data: areaDataRef.current },
+                ], false);
             }
 
-            if (chartReady.current) {
-                ApexCharts.exec(CHART_ID, 'updateSeries', [
-                    { data: dataRef.current },
+            // ── Update Candlestick chart ──
+            if (candleChartReady.current && (chartTypeRef.current === 'candlestick' || chartTypeRef.current === 'both')) {
+                // Completed candles + open candle
+                const candle = currentCandleRef.current;
+                const allCandles = [...candleDataRef.current];
+                if (candle) {
+                    allCandles.push({
+                        x: new Date(candle.startTime),
+                        y: [candle.open, candle.high, candle.low, candle.close],
+                    });
+                }
+                ApexCharts.exec(candleChartId, 'updateSeries', [
+                    { data: allCandles },
                 ], false);
             }
         }, THROTTLE_MS);
 
-        // Ekrandaki metrikleri yarım saniyede bir güncelle (daha az sık re-render)
+        // Metrics update loop
         const uiInterval = setInterval(() => {
             const price = latestPriceRef.current;
             if (price === null) return;
 
+            const ticker = tickerRef.current;
             setMetrics((prev) => ({
                 currentPrice: price,
                 prevPrice: prev.currentPrice,
-                tradeCount: statsRef.current.tradeCount,
-                sessionHigh: statsRef.current.sessionHigh,
-                sessionLow: statsRef.current.sessionLow,
-                totalVolume: statsRef.current.totalVolume,
+                priceChange: ticker.priceChange,
+                priceChangePercent: ticker.priceChangePercent,
+                high24h: ticker.high24h,
+                low24h: ticker.low24h,
+                volume24h: ticker.volume24h,
+                quoteVolume24h: ticker.quoteVolume24h,
+                tradeCount: ticker.tradeCount,
             }));
         }, UI_UPDATE_MS);
 
-        // Bileşen unmount olduğunda tüm timer ve bağlantıları temizle
         return () => {
             if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
             if (intervalRef.current) clearInterval(intervalRef.current);
             clearInterval(uiInterval);
         };
-    }, [connectWebSocket]);
+    }, [connectWebSocket, areaChartId, candleChartId]);
 
-    const { currentPrice, prevPrice, tradeCount, sessionHigh, sessionLow, totalVolume } = metrics;
+    const { currentPrice, prevPrice, priceChange, priceChangePercent, high24h, low24h, volume24h, quoteVolume24h, tradeCount } = metrics;
 
-    // Fiyat yönü (renk ve rozetler için)
     const priceDirection = useMemo(() => {
-        if (currentPrice === null || prevPrice === null) return 'neutral';
-        return currentPrice > prevPrice ? 'up' : currentPrice < prevPrice ? 'down' : 'neutral';
-    }, [currentPrice, prevPrice]);
+        if (priceChangePercent > 0) return 'up';
+        if (priceChangePercent < 0) return 'down';
+        return 'neutral';
+    }, [priceChangePercent]);
 
-    // ApexCharts konfigürasyonu (sadece ilk yüklemede hesaplanır)
-    const chartOptions = useMemo(() => ({
+    // ── Shared time range for both charts (based on candlestick interval for sync) ──
+    const sharedTimeRange = dataCount * CANDLE_INTERVAL;
+
+    // ── Area Chart Config ──
+
+    const areaChartOptions = useMemo(() => ({
         chart: {
-            id: CHART_ID,
+            id: areaChartId,
             type: 'area',
             animations: {
                 enabled: true,
@@ -156,46 +264,30 @@ export default function LiveTradingView() {
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             zoom: { enabled: false },
             events: {
-                mounted: () => { chartReady.current = true; },
+                mounted: () => { areaChartReady.current = true; },
             },
         },
         colors: ['#10b981'],
         fill: {
             type: 'gradient',
-            gradient: {
-                shadeIntensity: 1,
-                opacityFrom: 0.45,
-                opacityTo: 0.05,
-                stops: [0, 100],
-            },
+            gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 100] },
         },
         stroke: { curve: 'smooth', width: 2, colors: ['#10b981'] },
         grid: {
-            borderColor: '#1e293b',
-            strokeDashArray: 4,
-            xaxis: { lines: { show: true } },
-            yaxis: { lines: { show: true } },
+            borderColor: '#1e293b', strokeDashArray: 4,
+            xaxis: { lines: { show: true } }, yaxis: { lines: { show: true } },
             padding: { top: 0, right: 0, bottom: 20, left: 10 },
         },
         xaxis: {
             type: 'datetime',
-            range: MAX_DATA_POINTS * THROTTLE_MS,
-            labels: { 
+            range: sharedTimeRange,
+            labels: {
                 show: true,
                 style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
-                datetimeFormatter: { 
-                    year: 'yyyy', 
-                    month: "MMM 'yy", 
-                    day: 'dd MMM', 
-                    hour: 'HH:mm', 
-                    minute: 'HH:mm:ss', 
-                    second: 'HH:mm:ss' 
-                },
-                datetimeUTC: false, 
+                datetimeFormatter: { hour: 'HH:mm', minute: 'HH:mm:ss', second: 'HH:mm:ss' },
+                datetimeUTC: false,
             },
-            axisBorder: { show: false },
-            axisTicks: { show: false },
-            tooltip: { enabled: false }
+            axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false },
         },
         yaxis: {
             labels: {
@@ -205,176 +297,326 @@ export default function LiveTradingView() {
             opposite: true,
         },
         tooltip: {
-            enabled: true,
-            theme: 'dark',
+            enabled: true, theme: 'dark',
             x: { format: 'HH:mm:ss' },
             y: { formatter: (v) => `$${v?.toFixed(2)}` },
         },
         dataLabels: { enabled: false },
         theme: { mode: 'dark' },
-    }), []);
+    }), [areaChartId, sharedTimeRange]);
 
-    // Grafiğin başlangıç serisi
-    const initialSeries = useMemo(() => [{ name: 'BTC/USDT', data: [] }], []);
+    // ── Candlestick Chart Config ──
+    const candleChartOptions = useMemo(() => ({
+        chart: {
+            id: candleChartId,
+            type: 'candlestick',
+            animations: {
+                enabled: true,
+                easing: 'linear',
+                dynamicAnimation: { enabled: true, speed: THROTTLE_MS },
+                animateGradually: { enabled: false },
+            },
+            toolbar: { show: false },
+            background: 'transparent',
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            zoom: { enabled: false },
+            events: {
+                mounted: () => { candleChartReady.current = true; },
+            },
+        },
+        plotOptions: {
+            candlestick: {
+                colors: {
+                    upward: '#10b981',
+                    downward: '#ef4444',
+                },
+                wick: {
+                    useFillColor: true,
+                },
+            },
+        },
+        grid: {
+            borderColor: '#1e293b', strokeDashArray: 4,
+            xaxis: { lines: { show: true } }, yaxis: { lines: { show: true } },
+            padding: { top: 0, right: 0, bottom: 20, left: 10 },
+        },
+        xaxis: {
+            type: 'datetime',
+            range: sharedTimeRange,
+            labels: {
+                show: true,
+                style: { colors: '#64748b', fontSize: '10px', fontFamily: "'JetBrains Mono', monospace" },
+                datetimeFormatter: { hour: 'HH:mm', minute: 'HH:mm:ss', second: 'HH:mm:ss' },
+                datetimeUTC: false,
+            },
+            axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false },
+        },
+        yaxis: {
+            labels: {
+                style: { colors: '#64748b', fontSize: '11px', fontFamily: "'JetBrains Mono', monospace" },
+                formatter: (v) => v ? `$${v.toFixed(2)}` : '',
+            },
+            opposite: true,
+            tooltip: { enabled: true },
+        },
+        tooltip: {
+            enabled: true,
+            theme: 'dark',
+        },
+        dataLabels: { enabled: false },
+        theme: { mode: 'dark' },
+    }), [candleChartId, sharedTimeRange]);
 
-    // Yardımcı formatlayıcılar
+    const areaInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
+    const candleInitialSeries = useMemo(() => [{ name: pairLabel, data: [] }], [pairLabel]);
+
+    // ── Helpers ──
     const fmt = (p) => p ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
-    const fmtVol = (v) => v >= 1000 ? `${(v / 1000).toFixed(2)}K` : v.toFixed(4);
-
-    // Fiyat değişimi ve yüzde hesabı
-    const chg = currentPrice && prevPrice ? currentPrice - prevPrice : 0;
-    const chgPct = prevPrice ? (chg / prevPrice) * 100 : 0;
-
-    // Fiyat yönüne göre renk seçimi
+    const fmtVol = (v) => {
+        if (!v) return '---';
+        if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
+        if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+        if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
+        return v.toFixed(2);
+    };
+    const fmtNum = (n) => n ? n.toLocaleString('en-US') : '---';
     const priceColor = priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-200';
 
-    // Navbar'da gösterilen lokal saat
-    const [currentTime, setCurrentTime] = useState(new Date());
-    useEffect(() => {
-        const t = setInterval(() => setCurrentTime(new Date()), 1000);
-        return () => clearInterval(t);
-    }, []);
-    
-    // Arayüz iskeleti
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-50 font-sans flex flex-col">
-            
-            {/* Navbar */}
-            <header className="px-6 py-4 border-b border-slate-800/60 bg-slate-900/20 backdrop-blur-sm flex justify-between items-center sticky top-0 z-10">
-                <div className="flex items-center gap-3">
-                    <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
-                        <BarChart3 className="text-emerald-500" size={20} />
-                    </div>
-                    <div>
-                        <h1 className="font-bold text-lg tracking-tight leading-none">BTC Live Chart</h1>
-                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-widest">Dashboard</span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-4">
-                    <div className="hidden md:flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
-                        <Clock size={12} />
-                        {currentTime.toLocaleTimeString('en-US', { hour12: false })}
-                    </div>
-                    <Badge variant={isConnected ? "success" : "destructive"} className="px-3 py-1">
-                        {isConnected ? 'LIVE' : 'OFFLINE'}
-                    </Badge>
-                </div>
-            </header>
+        <main className="flex-1 p-4 md:p-6 flex flex-col gap-5 max-w-[1920px] mx-auto w-full">
 
-            {/* Main Content */}
-            <main className="flex-1 p-4 md:p-6 flex flex-col gap-6 max-w-[1920px] mx-auto w-full">
-                
-                {/* Row 1: Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    
-                    {/* Fiyat Kartı */}
-                    <Card className="border-slate-800 bg-slate-900/40 relative overflow-hidden group">
-                        <div className={cn("absolute top-0 right-0 w-24 h-24 bg-gradient-to-br opacity-5 blur-2xl rounded-full transition-all duration-500 group-hover:opacity-10", priceDirection === 'up' ? 'from-emerald-500' : 'from-red-500')} />
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center justify-between">
-                                Market Price
+            {/* Row 1: Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                {/* Price Card */}
+                <Card className="border-slate-800 bg-slate-900/40 relative overflow-hidden group">
+                    <div className={cn("absolute top-0 right-0 w-24 h-24 bg-gradient-to-br opacity-5 blur-2xl rounded-full transition-all duration-500 group-hover:opacity-10", priceDirection === 'up' ? 'from-emerald-500' : 'from-red-500')} />
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                            Market Price
+                            <div className="flex items-center gap-2">
                                 <span className="bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-md text-[11px] font-semibold border border-emerald-500/60 tracking-wide">
-                                    BTCUSDT
+                                    {pairLabel}
                                 </span>
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className={cn("text-3xl font-mono font-bold tracking-tight transition-colors duration-200", priceColor)}>
-                                {fmt(currentPrice)}
-                            </div>
-                            <div className="flex items-center gap-2 mt-2">
-                                <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'default'} className="bg-opacity-10 text-xs px-1.5">
-                                    {chgPct > 0 ? '+' : ''}{chgPct.toFixed(2)}%
+                                <Badge variant={isConnected ? "success" : "destructive"} className="px-2 py-0.5 text-[10px]">
+                                    {isConnected ? 'LIVE' : 'OFFLINE'}
                                 </Badge>
-                                <span className="text-xs text-slate-500 font-mono">
-                                    {chg > 0 ? '+' : ''}{chg.toFixed(2)}
-                                </span>
                             </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Range Kartı */}
-                    <Card className="border-slate-800 bg-slate-900/40">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                                <Maximize2 size={12} /> Session Range
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="flex flex-col justify-center gap-3 pt-2">
-                            <div className="flex justify-between items-center border-b border-slate-800/50 pb-2">
-                                <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
-                                <span className="font-mono text-sm font-semibold text-emerald-400 tracking-tight">
-                                    {sessionHigh > 0 ? fmt(sessionHigh) : '---'}
-                                </span>
-                            </div>
-                            <div className="flex justify-between items-center pt-1">
-                                <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
-                                <span className="font-mono text-sm font-semibold text-red-400 tracking-tight">
-                                    {sessionLow < Infinity ? fmt(sessionLow) : '---'}
-                                </span>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Hacim Kartı */}
-                    <Card className="border-slate-800 bg-slate-900/40">
-                         <CardHeader className="pb-2">
-                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                                <Wallet size={12} />Volume
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
-                                {fmtVol(totalVolume)}
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1">Total traded BTC</p>
-                        </CardContent>
-                    </Card>
-
-                    {/* İşlem Sayısı Kartı */}
-                    <Card className="border-slate-800 bg-slate-900/40">
-                         <CardHeader className="pb-2">
-                            <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                                <Zap size={12} className="text-amber-500" /> Active Trades
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
-                                {tradeCount.toLocaleString()}
-                            </div>
-                            
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {/* Row 2: Chart */}
-                <Card className="flex-1 min-h-[500px] border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl">
-                    <CardHeader className="border-b border-slate-800/50 py-3 px-6 flex flex-row items-center justify-between bg-slate-900/50">
-                        <div className="flex items-center gap-2">
-                            <Activity size={16} className="text-emerald-500" />
-                            <span className="text-sm font-medium text-slate-300">Live Market Depth</span>
-                        </div>
-                        <div className="flex gap-4">
-                            <div className="flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                <span className="text-[10px] text-slate-400 uppercase">Real-time</span>
-                            </div>
-                        </div>
+                        </CardTitle>
                     </CardHeader>
-                    <CardContent className="flex-1 p-0 relative">
-                        <div className="absolute inset-0 w-full h-full pb-2 pl-2">
-                            <Chart 
-                                options={chartOptions} 
-                                series={initialSeries} 
-                                type="area" 
-                                height="100%" 
-                                width="100%" 
-                            />
+                    <CardContent>
+                        <div className={cn("text-3xl font-mono font-bold tracking-tight transition-colors duration-200", priceColor)}>
+                            {fmt(currentPrice)}
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                            <Badge variant={priceDirection === 'up' ? 'success' : priceDirection === 'down' ? 'destructive' : 'default'} className="bg-opacity-10 text-xs px-1.5">
+                                {priceChangePercent > 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
+                            </Badge>
+                            <span className={cn("text-xs font-mono", priceDirection === 'up' ? 'text-emerald-500' : priceDirection === 'down' ? 'text-red-500' : 'text-slate-500')}>
+                                {priceChange > 0 ? '+' : ''}{priceChange.toFixed(2)}
+                            </span>
                         </div>
                     </CardContent>
                 </Card>
 
-            </main>
-        </div>
+                {/* 24h Range Card */}
+                <Card className="border-slate-800 bg-slate-900/40">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                            <Maximize2 size={12} /> 24h Range
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex flex-col justify-center gap-3 pt-2">
+                        <div className="flex justify-between items-center border-b border-slate-800/50 pb-2">
+                            <div className="flex items-center gap-1.5">
+                                <TrendingUp size={12} className="text-emerald-500" />
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">High</span>
+                            </div>
+                            <span className="font-mono text-sm font-semibold text-emerald-400 tracking-tight">
+                                {high24h > 0 ? fmt(high24h) : '---'}
+                            </span>
+                        </div>
+                        <div className="flex justify-between items-center pt-1">
+                            <div className="flex items-center gap-1.5">
+                                <TrendingDown size={12} className="text-red-500" />
+                                <span className="text-[10px] font-medium text-slate-500 uppercase">Low</span>
+                            </div>
+                            <span className="font-mono text-sm font-semibold text-red-400 tracking-tight">
+                                {low24h > 0 ? fmt(low24h) : '---'}
+                            </span>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* 24h Volume Card */}
+                <Card className="border-slate-800 bg-slate-900/40">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                            <Wallet size={12} /> 24h Volume
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
+                            {fmtVol(volume24h)}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1 font-mono">
+                            ≈ ${fmtVol(quoteVolume24h)} USDT
+                        </p>
+                    </CardContent>
+                </Card>
+
+                {/* 24h Trades Card */}
+                <Card className="border-slate-800 bg-slate-900/40">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                            <Zap size={12} className="text-amber-500" /> 24h Trades
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-mono font-bold text-slate-200 mt-1">
+                            {fmtNum(tradeCount)}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">Total transactions</p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Row 2: Chart */}
+            <Card className={cn(
+                "flex-1 border-slate-800 bg-slate-900/30 flex flex-col overflow-hidden shadow-xl",
+                chartType === 'both' ? "min-h-[800px]" : "min-h-[500px]"
+            )}>
+                <CardHeader className="border-b border-slate-800/50 py-3 px-6 bg-slate-900/50">
+                    {/* Header Row */}
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            <Activity size={16} className="text-emerald-500" />
+                            <span className="text-sm font-medium text-slate-300">Live Market — {pairLabel}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <span className={cn("w-1.5 h-1.5 rounded-full", isConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500")}></span>
+                            <span className="text-[10px] text-slate-400 uppercase">{isConnected ? 'Real-time' : 'Connecting...'}</span>
+                        </div>
+                    </div>
+
+                    {/* Controls Row */}
+                    <div className="flex flex-wrap items-center gap-4">
+                        {/* Chart Type Toggle */}
+                        <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1">
+                            <button
+                                onClick={() => setChartType('area')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'area'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <AreaChart size={14} />
+                                Area
+                            </button>
+                            <button
+                                onClick={() => setChartType('candlestick')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'candlestick'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <CandlestickChart size={14} />
+                                Candles
+                            </button>
+                            <button
+                                onClick={() => setChartType('both')}
+                                className={cn(
+                                    "flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+                                    chartType === 'both'
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                )}
+                            >
+                                <LayoutGrid size={14} />
+                                Both
+                            </button>
+                        </div>
+
+                        {/* Data Count - works for all chart types */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Count</span>
+                            <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                                {DATA_COUNTS.map((count) => (
+                                    <button
+                                        key={count}
+                                        onClick={() => setDataCount(count)}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-md text-[11px] font-mono font-medium transition-all",
+                                            dataCount === count
+                                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                : "text-slate-500 hover:text-slate-300 border border-transparent"
+                                        )}
+                                    >
+                                        {count}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </CardHeader>
+
+                <CardContent className="flex-1 p-0 relative">
+                    <div className="absolute inset-0 w-full h-full pb-2 pl-2">
+                        {chartType === 'both' ? (
+                            <div className="flex flex-col h-full gap-2">
+                                {/* Area Chart - Top Half */}
+                                <div className="flex-1 relative min-h-0">
+                                    <div className="absolute inset-0">
+                                        <Chart
+                                            key={`area-${symbol}`}
+                                            options={areaChartOptions}
+                                            series={areaInitialSeries}
+                                            type="area"
+                                            height="100%"
+                                            width="100%"
+                                        />
+                                    </div>
+                                </div>
+                                {/* Candlestick Chart - Bottom Half */}
+                                <div className="flex-1 relative min-h-0">
+                                    <div className="absolute inset-0">
+                                        <Chart
+                                            key={`candle-${symbol}`}
+                                            options={candleChartOptions}
+                                            series={candleInitialSeries}
+                                            type="candlestick"
+                                            height="100%"
+                                            width="100%"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : chartType === 'area' ? (
+                            <Chart
+                                key={`area-${symbol}`}
+                                options={areaChartOptions}
+                                series={areaInitialSeries}
+                                type="area"
+                                height="100%"
+                                width="100%"
+                            />
+                        ) : (
+                            <Chart
+                                key={`candle-${symbol}`}
+                                options={candleChartOptions}
+                                series={candleInitialSeries}
+                                type="candlestick"
+                                height="100%"
+                                width="100%"
+                            />
+                        )}
+                    </div>
+                </CardContent>
+            </Card>
+        </main>
     );
 }
